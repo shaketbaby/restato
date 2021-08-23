@@ -1,5 +1,5 @@
 {
-  "name": "cangku",
+  "name": "restato",
   "version": "0.0.0",
   "description": "A minimal and flexible store inspired by Redux",
   "type": "module",
@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shaketbaby/cangku.git"
+    "url": "git+https://github.com/shaketbaby/restato.git"
   },
   "keywords": [
     "store"
@@ -21,9 +21,9 @@
   "author": "shaketbaby",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/shaketbaby/cangku/issues"
+    "url": "https://github.com/shaketbaby/restato/issues"
   },
-  "homepage": "https://github.com/shaketbaby/cangku#readme",
+  "homepage": "https://github.com/shaketbaby/restato#readme",
   "devDependencies": {
     "@testing-library/react": "^12.0.0",
     "global-jsdom": "^8.1.0",
