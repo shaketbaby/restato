@@ -1,22 +1,21 @@
 import test from "tape";
 
+import { getTypeOf } from "./utils.js";
 import { createProxy } from "./proxy.js";
 
 test("createProxy", async (t) => {
   function newProxy(target) {
-    let latest = target;
     const copies = [];
     const listeners = [];
 
-    const getLatest = () => latest;
-    const onCopied = (copy) => copies.push(latest = copy);
+    const onCopied = (copy) => copies.push(copy);
     const whenComitted = (listener) => listeners.push(listener);
     const { proxy } = createProxy(target, onCopied, whenComitted);
 
-    return { proxy, getLatest, copies, commit: () => listeners.forEach(l => l()) };
+    return { proxy, copies, commit: () => listeners.forEach(l => l()) };
   }
 
-  for (const v of [0, 1n, true, "", null, undefined, Symbol("symbol")]) {
+  for (const v of [0, 1n, true, "", null, undefined, Symbol("symbol"), () => {}]) {
     const type = v === null ? 'null' : typeof(v);
     t.equal(newProxy(v).proxy, v, `returns "${type}" value as is`);
   }
@@ -144,5 +143,146 @@ test("createProxy", async (t) => {
       proxy.branch = [];
       ttt.throws(() => branch.foo, /Cannot perform 'get' on a proxy that has been revoked/);
     });
+  });
+
+  t.test("for Array", async function(tt) {
+    const target = [{}, "string"];
+    const { proxy, copies, commit } = newProxy(target);
+    tt.notEqual(proxy, target, "can create proxy");
+    tt.deepEqual(proxy, target, "has the same content");
+    tt.deepEqual(proxy[0], {}, "can access object item");
+    tt.deepEqual(proxy[1], "string", "can access string item");
+
+    proxy.push([]);
+    tt.deepEqual(proxy[2], [], "can push a new array item");
+    tt.deepEqual(copies, [[{}, "string", []]], "create a copy");
+    tt.deepEqual(target, [{}, "string"], "doesn't change target");
+
+    proxy[0].k = "v";
+    tt.deepEqual(proxy[0], { k: "v" }, "can mutate object item");
+    tt.deepEqual(target, [{}, "string"], "doesn't change target");
+    tt.deepEqual(copies, [[{ k: "v" }, "string", []]], "mutate current copy");
+    tt.deepEqual(proxy, copies[copies.length - 1], "proxy reflects the latest copy");
+
+    commit();
+    tt.comment("after changes are committed");
+
+    proxy[2].unshift(10, { doc: {} }, ["Jan", "Jan", "April"]);
+    proxy[2][0] = 100;
+
+    const nestedObj = proxy[2][1];
+    const { doc }= nestedObj;
+
+    nestedObj.doc = { foo: "bar" };
+
+    tt.equal(doc.foo, "bar", "prop proxy reflects latest value");
+
+    const nestedArr = proxy[2][2];
+    nestedArr.splice(1, 1, "Feb", "Mar");
+
+    const expected = [
+      [{ k: "v" }, "string", []],
+      [{ k: "v" }, "string", [100, { doc: { foo: "bar" } }, ["Jan", "Feb", "Mar", "April"]]],
+    ];
+    tt.deepEqual(copies, expected, "makes a new copy with changes");
+    tt.deepEqual(proxy, copies[copies.length - 1], "proxy reflects the latest copy");
+
+    tt.equal(proxy.includes("string"), true, "can call includes");
+    tt.equal(nestedArr.find(item => item.startsWith("F")), "Feb", "can call find");
+    tt.deepEqual(proxy[2].map(getTypeOf), ["number", "object", "array"], "can map");
+
+    proxy[2][1] = true;
+    delete proxy[2][2];
+    tt.throws(() => doc.foo, /Cannot perform 'get' on a proxy that has been revoked/);
+    tt.throws(() => nestedObj.doc, /Cannot perform 'get' on a proxy that has been revoked/);
+    tt.throws(() => nestedArr[0], /Cannot perform 'get' on a proxy that has been revoked/);
+  });
+
+  t.test("for Map", async function(tt) {
+    const target = new Map();
+    target.set("object", {});
+    target.set("string", "string");
+
+    const { proxy, copies, commit } = newProxy(target);
+    tt.notEqual(proxy, target, "can create proxy");
+    tt.equal(getTypeOf(proxy), "map", "is instance of Map");
+    tt.deepEqual(new Map(proxy), target, "has the same entries");
+    tt.deepEqual(proxy.get("object"), {}, "can access array entry");
+    tt.deepEqual(proxy.get("string"), "string", "can access string entry");
+    tt.deepEqual(copies, [], "do not copy for read access");
+
+    proxy.set("array", []);
+    tt.equal(proxy.size, 3, "has correct size");
+    tt.deepEqual(proxy.get("array"), [], "can set a new array entry");
+    tt.deepEqual(target, new Map([["object", {}], ["string", "string"]]), "doesn't change target");
+    tt.deepEqual(copies, [new Map([["object", {}], ["string", "string"], ["array", []]])], "create a copy");
+
+    proxy.get("object").k = "v";
+    tt.deepEqual(proxy.get("object"), { k: "v" }, "can mutate object entry");
+    tt.deepEqual(target, new Map([["object", {}], ["string", "string"]]), "doesn't change target");
+    tt.deepEqual(copies, [new Map([["object", { k: "v" }], ["string", "string"], ["array", []]])], "create a copy");
+    tt.deepEqual(new Map(proxy), copies[copies.length - 1], "proxy reflects the latest copy");
+
+    commit();
+    tt.comment("after changes are committed");
+
+    proxy.get("array").unshift(10, { map: new Map() }, ["Jan", "Jan", "April"]);
+    proxy.get("array")[0] = 100;
+
+    const nestedObj = proxy.get("array")[1];
+    const { map }= nestedObj;
+
+    nestedObj.map = new Map(Object.entries({ foo: "bar" }));
+
+    tt.equal(map.get("foo"), "bar", "prop proxy reflects latest value");
+
+    const nestedArr = proxy.get("array")[2];
+    nestedArr.splice(1, 1, "Feb", "Mar");
+
+    const expected = [
+      new Map([
+        ["object", { k: "v" }],
+        ["string", "string"],
+        ["array", []]
+      ]),
+      new Map([
+        ["object", { k: "v" }],
+        ["string", "string"],
+        ["array", [100, { map: new Map([["foo", "bar"]]) }, ["Jan", "Feb", "Mar", "April"]]]
+      ]),
+    ];
+    tt.deepEqual(copies, expected, "makes a new copy with changes");
+    tt.deepEqual([...nestedObj.map.values()], ["bar"], "return correct values");
+    tt.deepEqual(Array.from(proxy.keys()), ["object", "string", "array"], "return correct keys");
+    tt.deepEqual(proxy.get("array").map(getTypeOf), ["number", "object", "array"], "can map nested array");
+
+    const arrProxy = proxy.get("array");
+    arrProxy[1].map.delete("foo");
+    tt.equal(map.has("foo"), false, "has return false after key is deleted");
+
+    arrProxy[1].map = {};
+    tt.throws(() => map.size, /Cannot perform 'get' on a proxy that has been revoked/);
+
+    proxy.delete("array");
+    tt.throws(() => arrProxy[0], /Cannot perform 'get' on a proxy that has been revoked/);
+
+    commit();
+
+    const $this = Symbol("this");
+    const forEachActual = [];
+    proxy.forEach(
+      function(value, key, p) {
+        forEachActual.push([key, value, p, this]);
+      },
+      $this
+    );
+    const forEachExpected = [
+      ["object", { k: "v" }, proxy, $this],
+      ["string", "string", proxy, $this],
+    ];
+    tt.deepEqual(forEachActual, forEachExpected, "forEach works as expected");
+
+    proxy.values().next().value.k = "value";
+    tt.deepEqual(copies[2].get("object"), { k: "value" }, "makes a copy when modify value return from valus()");
   });
 });

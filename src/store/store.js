@@ -17,18 +17,18 @@ export function createStore(initState = {}) {
 
   // external store interface
   return {
-    dispatch: ensureNotDestroyed.bind((action, ...args) => {
+    dispatch: ifNotDestroyed.bind((action, ...args) => {
       // enqueue the action to trigger later instead of immediately
       // so that actions dispatched almost at same time are batched
       pendingActions.push([action, args]);
       schedule(pendingActionsCount, triggerActions);
     }),
 
-    select: ensureNotDestroyed.bind((selector) => {
+    select: ifNotDestroyed.bind((selector) => {
       return selector(state);
     }),
 
-    subscribe: ensureNotDestroyed.bind((selector) => {
+    subscribe: ifNotDestroyed.bind((selector) => {
       selectors.push(selector);
 
       // return an unsub function
@@ -45,7 +45,7 @@ export function createStore(initState = {}) {
   };
 
   // internal implementations
-  function ensureNotDestroyed(...args) {
+  function ifNotDestroyed(...args) {
     if (!selectors) {
       throw new Error("Store has been destroyed!");
     }

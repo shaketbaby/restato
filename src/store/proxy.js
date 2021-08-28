@@ -1,25 +1,9 @@
-function copy(target) {
-  const proto = Object.getPrototypeOf(target);
-  return Object.assign(Object.create(proto), target);
-}
-
-function getTypeOf(value) {
-  if (value === null) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    return "array";
-  }
-  if (value instanceof Date) {
-    return "date";
-  }
-  return typeof (value);
-}
+import { copy, getTypeOf, inherit, needsProxy } from "./utils.js";
 
 /**
  * Create a new proxy which traps all interactions with the target.
  * When proxy is mutated, it doesn't mutate target but creates a copy instead.
- * 
+ *
  * @param {Function} getLatest get the lastest value of the proxy target
  * @param {Function} onCopied callback that should be called when target is copied
  *                            for example, set or delete a property
@@ -31,87 +15,111 @@ function getTypeOf(value) {
  * @returns a copy on write proxy
  */
 export function createProxy(value, onCopied, whenCommitted) {
-  let mutated = false;
+  if (!needsProxy(value)) {
+    return { proxy: value };
+  }
+
   let target = value;
-  const proxiedProps = new Map();
+  let mutated = false;
+  const proxyChildren = new Map();
+  const isMap = target instanceof Map;
 
-  try {
-    function mutate(doMutate) {
-      if (!mutated) {
-        // reset after committed as new changes need to be bubbled up again
-        whenCommitted(() => { mutated = false });
-      }
+  const { proxy, revoke } = Proxy.revocable(
+    isMap ? mapTarget() : target,
+    isMap ? {} : objectHandler()
+  );
+  return Object.freeze({
+    proxy,
+    // revoke self and all proxy children
+    revoke() {
+      proxyChildren.forEach(child => child.revoke());
+      proxyChildren.clear();
+      target = undefined;
+      revoke();
+    },
+    // used by parent to pass in latest target
+    // called when prop is set to a different value, e.g.
+    // - parent[target] = newValue
+    // - parentMap.set(target, newValue)
+    setTarget(t) { target = t; }
+  });
 
-      // make a copy if hasn't mutated
-      const shouldCopy = !mutated;
-      if (shouldCopy) {
-        target = copy(target);
-      }
+  // internal implementation
 
-      const result = doMutate(target);
-
-      if (shouldCopy) {
-        onCopied(target);
-      }
-
-      mutated = true;
-      return result;
-    }
-
-    function deleteProxy(prop) {
-      const child = proxiedProps.get(prop);
-      if (child) {
-        child.revoke();
-        proxiedProps.delete(prop);
-      }
-    }
-
-    const { proxy, revoke } = Proxy.revocable(target, {
-      apply(fn, fnTthis, args) {
-        return Reflect.apply(fn, fnTthis, args);
+  function mapTarget() {
+    return inherit(Map.prototype, {
+      size: { get: () => target.size },
+      has: (key) => target.has(key),
+      get: (key) => getChild(key),
+      set(key, value) {
+        setChild(key, value);
+        return this; // return map proxy
       },
-
-      get(_, prop, receiver) {
-        // create proxy if hasn't already
-        let child = proxiedProps.get(prop);
-        if (!child) {
-          child = createProxy(
-            Reflect.get(target, prop, receiver),
-            (value) => this.set(_, prop, value, proxy),
-            whenCommitted
-          );
-          if (child.revoke) {
-            proxiedProps.set(prop, child);
+      delete(key) {
+        return target.has(key) && mutate(() => {
+          const r = target.delete(key);
+          deleteChild(key);
+          return r;
+        });
+      },
+      clear() {
+        target.size > 0 && mutate(() => {
+          proxyChildren.forEach(child => child.revoke());
+          proxyChildren.clear();
+          target.clear();
+        });
+      },
+      // no need to proxy map keys
+      // won't be able to get same value if key is mutated
+      keys: () => target.keys(),
+      values() {
+        const iter = this.keys();
+        return inherit(iter, {
+          next() {
+            const r = iter.next();
+            const { done, value } = r;
+            return done ? r : { done, value: getChild(value) };
           }
-        }
-        return child.proxy;
+        });
+      },
+      entries() {
+        const iter = this.keys();
+        return inherit(iter, {
+          next() {
+            const r = iter.next();
+            const { done, value } = r;
+            return done ? r : { done, value: [value, getChild(value)] };
+          }
+        });
+      },
+      [Symbol.iterator]() {
+        return this.entries();
+      },
+      forEach(cb, cbThis) {
+        target.forEach((_, key) => cb.call(cbThis, getChild(key), key, this));
+      }
+    });
+  }
+
+  function objectHandler() {
+    return {
+      get(_, prop) {
+        return getChild(prop);
       },
 
       set(_, prop, value, receiver) {
         if (receiver !== proxy) {
+          // value is set onto a different target
+          // do not intercept and just pass through
           return Reflect.set(_, prop, value, receiver);
         }
-        return mutate((target) => {
-          // need to delete and revoke old proxy if type has changed
-          // for example, if prop changed from Array to Object
-          // Array.isArray() will still return true for old proxy
-          const oldType = getTypeOf(target[prop]);
-          const newType = getTypeOf(value);
-          if (oldType !== newType) {
-            deleteProxy(prop);
-          }
-          // update prop value
-          target[prop] = value;
-          // update target of child proxy
-          proxiedProps.get(prop)?.setTarget(value);
-          return true;
-        });
+        return setChild(prop, value);
       },
 
       deleteProperty(_, prop) {
         return mutate((target) => {
           delete target[prop];
-          deleteProxy(prop);
+          deleteChild(prop);
           return true;
         });
       },
@@ -147,19 +155,72 @@ export function createProxy(value, onCopied, whenCommitted) {
       setPrototypeOf(_, proto) {
         return mutate((target) => Reflect.setPrototypeOf(target, proto));
       }
-    });
-
-    // revoke self and all proxy children
-    const deepRevoke = () => {
-      proxiedProps.forEach(child => child.revoke());
-      proxiedProps.clear();
-      revoke();
     };
-
-    return { proxy, revoke: deepRevoke, setTarget(t) { target = t; } };
-  } catch (error) {
-    // ignore, target is a primitive value
   }
 
-  return { proxy: target };
+  function getChild(key) {
+    // create proxy if hasn't already
+    let child = proxyChildren.get(key);
+    if (!child) {
+      const value = isMap ? target.get(key) : target[key];
+      child = createProxy(value, (v) => setChild(key, v), whenCommitted);
+      if (child.revoke) {
+        proxyChildren.set(key, child);
+      }
+    }
+    return child.proxy;
+  }
+
+  function setChild(key, value) {
+    return mutate(() => {
+      // need to delete and revoke old proxy if type has changed
+      // for example, if prop changed from Array to Object
+      // Array.isArray() will still return true for old proxy
+      const oldValue = isMap ? target.get(key) : target[key];
+      const oldType = getTypeOf(oldValue);
+      const newType = getTypeOf(value);
+      if (oldType !== newType) {
+        deleteChild(key);
+      }
+      // update prop value
+      if (isMap) {
+        target.set(key, value);
+      } else {
+        target[key] = value;
+      }
+      // update target of child proxy
+      proxyChildren.get(key)?.setTarget(value);
+      return true;
+    });
+  }
+
+  function deleteChild(key) {
+    const child = proxyChildren.get(key);
+    if (child) {
+      child.revoke();
+      proxyChildren.delete(key);
+    }
+  }
+
+  function mutate(doMutate) {
+    if (!mutated) {
+      // reset after committed as new changes need to be bubbled up again
+      whenCommitted(() => { mutated = false });
+    }
+
+    // make a copy if hasn't mutated
+    const shouldCopy = !mutated;
+    if (shouldCopy) {
+      target = copy(target);
+    }
+
+    const result = doMutate(target);
+
+    if (shouldCopy) {
+      onCopied(target);
+    }
+
+    mutated = true;
+    return result;
+  }
 }
