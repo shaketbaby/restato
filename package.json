@@ -1,6 +1,6 @@
 {
   "name": "restato",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A minimal and flexible store inspired by Redux",
   "type": "module",
   "main": "./src/store/index.js",
