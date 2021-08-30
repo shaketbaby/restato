@@ -206,7 +206,7 @@ test("createProxy", async (t) => {
     const { proxy, copies, commit } = newProxy(target);
     tt.notEqual(proxy, target, "can create proxy");
     tt.equal(getTypeOf(proxy), "map", "is instance of Map");
-    tt.deepEqual(new Map(proxy), target, "has the same entries");
+    tt.deepEqual(proxy, target, "has the same entries");
     tt.deepEqual(proxy.get("object"), {}, "can access array entry");
     tt.deepEqual(proxy.get("string"), "string", "can access string entry");
     tt.deepEqual(copies, [], "do not copy for read access");
@@ -221,7 +221,7 @@ test("createProxy", async (t) => {
     tt.deepEqual(proxy.get("object"), { k: "v" }, "can mutate object entry");
     tt.deepEqual(target, new Map([["object", {}], ["string", "string"]]), "doesn't change target");
     tt.deepEqual(copies, [new Map([["object", { k: "v" }], ["string", "string"], ["array", []]])], "create a copy");
-    tt.deepEqual(new Map(proxy), copies[copies.length - 1], "proxy reflects the latest copy");
+    tt.deepEqual(proxy, copies[copies.length - 1], "proxy reflects the latest copy");
 
     commit();
     tt.comment("after changes are committed");

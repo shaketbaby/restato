@@ -9,7 +9,7 @@
     "./react": "./src/bindings/react.js"
   },
   "scripts": {
-    "test": "tape src/**/*.test.js | tap-spec"
+    "test": "tape -r ./test/helper.cjs src/**/*.test.js | tap-spec"
   },
   "repository": {
     "type": "git",
