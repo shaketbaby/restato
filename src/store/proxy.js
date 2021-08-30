@@ -24,10 +24,8 @@ export function createProxy(value, onCopied, whenCommitted) {
   const proxyChildren = new Map();
   const isMap = target instanceof Map;
 
-  const { proxy, revoke } = Proxy.revocable(
-    isMap ? mapTarget() : target,
-    isMap ? {} : objectHandler()
-  );
+  const proxyHandler = isMap ? mapHandler() : objectHandler();
+  const { proxy, revoke } = Proxy.revocable(target, proxyHandler);
   return Object.freeze({
     proxy,
     // revoke self and all proxy children
@@ -46,9 +44,9 @@ export function createProxy(value, onCopied, whenCommitted) {
 
   // internal implementation
 
-  function mapTarget() {
-    return inherit(Map.prototype, {
-      size: { get: () => target.size },
+  function mapHandler() {
+    const mapMethods = {
+      get size() { return target.size },
       has: (key) => target.has(key),
       get: (key) => getChild(key),
       set(key, value) {
@@ -98,7 +96,8 @@ export function createProxy(value, onCopied, whenCommitted) {
       forEach(cb, cbThis) {
         target.forEach((_, key) => cb.call(cbThis, getChild(key), key, this));
       }
-    });
+    };
+    return { get: (_, prop) => mapMethods[prop] };
   }
 
   function objectHandler() {
