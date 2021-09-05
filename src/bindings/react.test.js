@@ -27,4 +27,4 @@ test("ReactStore", async (t) => {
 
   t.end();
   cleanup();
-})
+});

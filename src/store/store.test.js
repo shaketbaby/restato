@@ -2,11 +2,14 @@ import test from "tape";
 
 import { createStore } from "./store.js";
 
-test("store", async (t) => {
-  t.test("can select value", async (tt) => {
+test("store", (t) => {
+  t.test("can select value", (tt) => {
+    tt.plan(2);
+
     const store = createStore({ key: "value" });
     const value = store.select(state => state.key);
     tt.equal(value, "value");
+    tt.throws(() => value.err = "throws", /Cannot create property 'err' on string 'value'/);
   });
 
   t.test("can be changed by disptaching actions", (tt) => {
@@ -21,7 +24,7 @@ test("store", async (t) => {
     const store = createStore({ key: "value" });
     store.dispatch(action, "dispatched value");
 
-    // action is dispatched asynchronously 
+    // action is dispatched asynchronously
     tt.equal(store.select(selector), undefined);
     // select again in next tick should get value
     setTimeout(() => {
@@ -162,21 +165,25 @@ test("store", async (t) => {
     }));
   });
 
-  t.test("can not be used after calling destroy", async (tt) => {
+  t.test("can not be used after calling destroy", (tt) => {
+    tt.plan(4);
+
     const store = createStore({});
 
     let proxy;
     store.dispatch(state => proxy = state);
 
-    await Promise.resolve().then(() => store.destory());
+    Promise.resolve().then(() => {
+      store.destory()
 
-    // proxy can not be used again
-    tt.throws(() => proxy.foo, /Cannot perform 'get' on a proxy that has been revoked/);
-    // all methods on store throws
-    const noop = () => void 0;
-    const error = new Error("Store has been destroyed!");
-    tt.throws(() => store.subscribe(noop), error);
-    tt.throws(() => store.dispatch(noop), error);
-    tt.throws(() => store.select(noop), error);
+      // proxy can not be used again
+      tt.throws(() => proxy.foo, /Cannot perform 'get' on a proxy that has been revoked/);
+      // all methods on store throws
+      const noop = () => void 0;
+      const error = new Error("Store has been destroyed!");
+      tt.throws(() => store.subscribe(noop), error);
+      tt.throws(() => store.dispatch(noop), error);
+      tt.throws(() => store.select(noop), error);
+    });
   });
 });

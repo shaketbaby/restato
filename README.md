@@ -1,6 +1,6 @@
 # restato
 
-A minimal and flexible store inspired by Redux.
+A minimal but very flexible and powerful store inspired by Redux.
 
 # Install
 
@@ -25,6 +25,9 @@ New store can be created by calling `createStore` with initial state.
 ```javascript
 import { createStore } from "restato";
 
+// initState object will be deeply frozen after createStore() returns;
+// any mutation attempts will fail, either silently or by throwing a
+// TypeError exception (most commonly, but not exclusively, when in strict mode).
 const initState = {};
 const store = createStore(initState);
 const { dispatch, select, subscribe } = store;
@@ -92,6 +95,27 @@ function actionTwo(state) {
 
 dispatch(actionTwo);
 ```
+_Note, when assign object and other container values like array, Map and Set to state or one of its offsprings in action, value will be frozen and no furthur mutations can be made on it directly. All changes must be done via the reference get from state_
+```javascript
+function action(state) {
+  const obj = { key: "value" };
+
+  // after this line, object will be frozen, variable obj can not be used any more
+  // any mutation attempts will fail, either silently or by throwing a
+  // TypeError exception (most commonly, but not exclusively, when in strict mode).
+  state.obj = obj;
+
+  const key = obj.key; // read is still ok
+  obj.foo = "bar"; // either ignore silently or throw error
+
+  state.obj.foo = "bar"; // Ok
+
+  // use a reference returned from state
+  const stateObj = state.obj;
+  stateObj.foo = "bar"; // Ok
+
+}
+```
 
 ## Selector
 
@@ -99,7 +123,8 @@ Selector is used to read state out of store.
 
 Similar to action, a selector is just a function that is called with current state as the only parameter.
 
-Selecor should only read from state.
+Selecor should only read from state. Everything returned from selector is frozen, any mutation attempts will fail, either silently or by throwing a TypeError exception (most commonly, but not exclusively, when in strict mode).
+
 
 ```javascript
 // get dispatch form a store object
@@ -151,3 +176,16 @@ const store = createStore();
 ## Testing
 
 A common requirement for writing tests for UI components is to initialise store to a certain state. That can be done easily by dispatching a special action that set store to the expected state.
+```javascript
+test("Counter", async (t) => {
+  // initialise store to required state
+  dispatch((state) => state.count = 0);
+
+  // then render component
+  render(<Counter/>);
+
+  // assertions
+  expect(...);
+});
+
+```

@@ -1,4 +1,10 @@
-import { copy, getTypeOf, inherit, needsProxy } from "./utils.js";
+import { copy, deepFreeze, freezeCollection, getTypeOf, needsProxy } from "./utils.js";
+
+const ProxyTargets = {
+  map: new Map(),
+  object: {},
+  array: [],
+};
 
 /**
  * Create a new proxy which traps all interactions with the target.
@@ -24,8 +30,10 @@ export function createProxy(value, onCopied, whenCommitted) {
   const proxyChildren = new Map();
   const isMap = target instanceof Map;
 
-  const proxyHandler = isMap ? mapHandler() : objectHandler();
-  const { proxy, revoke } = Proxy.revocable(target, proxyHandler);
+  const { proxy, revoke } = Proxy.revocable(
+    ProxyTargets[getTypeOf(target)],
+    isMap ? mapHandler() : objectHandler()
+  );
   return Object.freeze({
     proxy,
     // revoke self and all proxy children
@@ -50,7 +58,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       has: (key) => target.has(key),
       get: (key) => getChild(key),
       set(key, value) {
-        setChild(key, value);
+        setChild(key, deepFreeze(value));
         return this; // return map proxy
       },
       delete(key) {
@@ -71,24 +79,24 @@ export function createProxy(value, onCopied, whenCommitted) {
       // won't be able to get same value if key is mutated
       keys: () => target.keys(),
       values() {
-        const iter = this.keys();
-        return inherit(iter, {
-          next() {
-            const r = iter.next();
-            const { done, value } = r;
-            return done ? r : { done, value: getChild(value) };
-          }
-        });
+        function next() {
+          const r = Object.getPrototypeOf(this).next.call(this);
+          const { done, value } = r;
+          return done ? r : { done, value: getChild(value) };
+        }
+        return Object.freeze(
+          Object.defineProperty(this.keys(), "next", { value: next })
+        );
       },
       entries() {
-        const iter = this.keys();
-        return inherit(iter, {
-          next() {
-            const r = iter.next();
-            const { done, value } = r;
-            return done ? r : { done, value: [value, getChild(value)] };
-          }
-        });
+        function next() {
+          const r = Object.getPrototypeOf(this).next.call(this);
+          const { done, value } = r;
+          return done ? r : { done, value: [value, getChild(value)] };
+        };
+        return Object.freeze(
+          Object.defineProperty(this.keys(), "next", { value: next })
+        );
       },
       [Symbol.iterator]() {
         return this.entries();
@@ -112,19 +120,19 @@ export function createProxy(value, onCopied, whenCommitted) {
           // do not intercept and just pass through
           return Reflect.set(_, prop, value, receiver);
         }
-        return setChild(prop, value);
+        return setChild(prop, deepFreeze(value));
       },
 
       deleteProperty(_, prop) {
-        return mutate((target) => {
-          delete target[prop];
-          deleteChild(prop);
-          return true;
+        return !Reflect.has(target, prop) || mutate(() => {
+          const r = Reflect.deleteProperty(target, prop);
+          r && deleteChild(prop);
+          return r;
         });
       },
 
       defineProperty(_, prop, descriptor) {
-        return mutate((target) => Reflect.defineProperty(target, prop, descriptor));
+        return mutate(() => Reflect.defineProperty(target, prop, descriptor));
       },
 
       has(_, prop) {
@@ -135,8 +143,16 @@ export function createProxy(value, onCopied, whenCommitted) {
         return Reflect.ownKeys(target);
       },
 
-      getOwnPropertyDescriptor(_, prop) {
-        return Reflect.getOwnPropertyDescriptor(target, prop);
+      getOwnPropertyDescriptor(t, prop) {
+        const ret = {
+          ...Reflect.getOwnPropertyDescriptor(target, prop),
+          // eveything on proxy is mutable
+          configurable: true,
+          writable: true,
+          // unless this is a special prop
+          ...Reflect.getOwnPropertyDescriptor(t, prop)
+        };
+        return ret;
       },
 
       isExtensible() {
@@ -152,7 +168,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       },
 
       setPrototypeOf(_, proto) {
-        return mutate((target) => Reflect.setPrototypeOf(target, proto));
+        return mutate(() => Reflect.setPrototypeOf(target, proto));
       }
     };
   }
@@ -203,23 +219,32 @@ export function createProxy(value, onCopied, whenCommitted) {
 
   function mutate(doMutate) {
     if (!mutated) {
-      // reset after committed as new changes need to be bubbled up again
-      whenCommitted(() => { mutated = false });
-    }
+      // request to be notified on first mutation
+      whenCommitted(commit);
 
-    // make a copy if hasn't mutated
-    const shouldCopy = !mutated;
-    if (shouldCopy) {
+      // make a copy if hasn't mutated
+      // do not mutate committed target
       target = copy(target);
     }
 
-    const result = doMutate(target);
+    const result = doMutate();
 
-    if (shouldCopy) {
+    if (!mutated) {
       onCopied(target);
     }
 
     mutated = true;
     return result;
+  }
+
+  // target can not be mutated in place after each commit
+  // all new changes need to be made on a new copy and
+  // need to be bubbled up again
+  function commit() {
+    mutated = false
+    // free target if not revoked
+    if (target) {
+      (isMap ? freezeCollection : Object.freeze)(target);
+    }
   }
 }

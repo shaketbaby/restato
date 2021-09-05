@@ -9,14 +9,19 @@
     "./react": "./src/bindings/react.js"
   },
   "scripts": {
-    "test": "tape -r ./test/helper.cjs src/**/*.test.js | tap-spec"
+    "test": "tape src/**/*.test.js | tap-spec"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shaketbaby/restato.git"
   },
   "keywords": [
-    "store"
+    "store",
+    "state",
+    "redux",
+    "react",
+    "saga",
+    "effects"
   ],
   "author": "shaketbaby",
   "license": "MIT",

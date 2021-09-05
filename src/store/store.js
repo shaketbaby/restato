@@ -1,4 +1,5 @@
 import { createProxy } from "./proxy.js";
+import { deepFreeze } from "./utils.js";
 
 export function createStore(initState = {}) {
   // actions to be triggered
@@ -9,7 +10,7 @@ export function createStore(initState = {}) {
   let commitListeners = []; // internal listeners
 
   // current committed state
-  let state = initState;
+  let state = deepFreeze(initState);
   // latest state, including uncommitted changes
   let latest = state;
   // a copy on write proxy reflects latest state
