@@ -315,16 +315,55 @@ test("createProxy", async (t) => {
 
     tt.test("mutate prototype", async (ttt) => {
       const target = deepFreeze({});
-      const { proxy, copies, listeners, commit } = newProxy(target);
+      const { proxy, copies, listeners } = newProxy(target);
 
-      const proto = { [Symbol("prototype")]: true };
+      let proto = Object.getPrototypeOf(proxy);
+      ttt.equal(Object.setPrototypeOf(proxy, proto), proxy, "can set prototype to same object")
+      ttt.deepEqual(listeners, [], "does not register a commit listener");
+      ttt.deepEqual(copies, [], "does not make a copy ");
 
-      ttt.equal(Object.setPrototypeOf(proxy, proto), proxy, "can set prototype");
-      ttt.equal(Object.getPrototypeOf(proxy), proto, "can get prototype");
+      proto = { [Symbol("prototype")]: true };
+
+      ttt.equal(Object.setPrototypeOf(proxy, proto), proxy, "can set prototype to a different object");
+      ttt.equal(Object.getPrototypeOf(proxy), proto, "can get the newly set prototype");
       ttt.deepEqual(listeners.length, 1, "registers a commit listener");
       ttt.deepEqual(copies, [Object.setPrototypeOf({}, proto)], "make a copy ");
       ttt.equal(Object.getPrototypeOf(copies[0]), proto, "copy has correct prototype");
       ttt.notEqual(copies[0], target, "copy !== target");
+    });
+
+    tt.test("reassign prop", async (ttt) => {
+      const target = deepFreeze({
+        object: {
+          wontExist: {},
+          typeWillChange: {},
+          valueWillChange: { k: "v" },
+          notTouchedTypeWillChange: {},
+        }
+      });
+      const { proxy } = newProxy(target);
+      const objectProxy = proxy.object;
+      const wontExistProxy = proxy.object.wontExist;
+      const typeWillChangeProxy = objectProxy.typeWillChange;
+      const valueWillChangeProxy = proxy.object.valueWillChange;
+      // reassign object
+      proxy.object = {
+        typeWillChange: [],
+        valueWillChange: { k: "v2" },
+        notTouchedTypeWillChange: ["not touched"],
+      };
+      const revokedErrpr = /Cannot perform 'get' on a proxy that has been revoked/;
+      ttt.equal(Reflect.has(objectProxy, "wontExist"), false, "old proxy of updated prop does not have removed child prop");
+      ttt.throws(() => wontExistProxy.foo, revokedErrpr, "old proxy of removed child prop is revoked");
+      ttt.equal(objectProxy.wontExist, undefined, "returns undefined for removed child prop");
+
+      ttt.throws(() => typeWillChangeProxy.foo, revokedErrpr, "old proxy of type changing child is revoked");
+      ttt.deepEqual(objectProxy.typeWillChange, [], "returns new value for type changing child");
+
+      ttt.deepEqual(valueWillChangeProxy, { k: "v2" }, "old proxy of value changing child reflects latest value");
+      ttt.deepEqual(objectProxy.valueWillChange, { k: "v2" }, "returns new value for value changing child");
+
+      ttt.deepEqual(objectProxy.notTouchedTypeWillChange, ["not touched"], "returns new value for not touched child");
     });
   });
 

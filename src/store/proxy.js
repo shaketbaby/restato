@@ -47,7 +47,26 @@ export function createProxy(value, onCopied, whenCommitted) {
     // called when prop is set to a different value, e.g.
     // - parent[target] = newValue
     // - parentMap.set(target, newValue)
-    setTarget(t) { target = t; }
+    setTarget(t) {
+      // go through each child proxy, if their value has changed
+      // then revoke child proxies if any of the follow is true
+      //   - type of their target has changed
+      //   - their target doesn't exist anymore
+      // otherwise update child target
+      proxyChildren.forEach((child, key) => {
+        const newValue = isMap ? t.get(key) : t[key];
+        const oldValue = isMap ? target.get(key) : target[key];
+        if(newValue !== oldValue) {
+          if (getTypeOf(newValue) === getTypeOf(oldValue)) {
+            child.setTarget(newValue);
+          } else {
+            deleteChild(key, child);
+          }
+        }
+      });
+      // update target
+      target = t;
+    }
   });
 
   // internal implementation
@@ -168,7 +187,8 @@ export function createProxy(value, onCopied, whenCommitted) {
       },
 
       setPrototypeOf(_, proto) {
-        return mutate(() => Reflect.setPrototypeOf(target, proto));
+        const same = proto === Reflect.getPrototypeOf(target);
+        return same || mutate(() => Reflect.setPrototypeOf(target, proto));
       }
     };
   }
@@ -178,7 +198,7 @@ export function createProxy(value, onCopied, whenCommitted) {
     let child = proxyChildren.get(key);
     if (!child) {
       const value = isMap ? target.get(key) : target[key];
-      child = createProxy(value, (v) => setChild(key, v), whenCommitted);
+      child = createProxy(value, (v) => setChild(key, v, true), whenCommitted);
       if (child.revoke) {
         proxyChildren.set(key, child);
       }
@@ -186,15 +206,13 @@ export function createProxy(value, onCopied, whenCommitted) {
     return child.proxy;
   }
 
-  function setChild(key, value) {
-    return mutate(() => {
+  function setChild(key, value, isBubbledUp) {
+    const oldValue = isMap ? target.get(key) : target[key];
+    return oldValue === value || mutate(() => {
       // need to delete and revoke old proxy if type has changed
       // for example, if prop changed from Array to Object
       // Array.isArray() will still return true for old proxy
-      const oldValue = isMap ? target.get(key) : target[key];
-      const oldType = getTypeOf(oldValue);
-      const newType = getTypeOf(value);
-      if (oldType !== newType) {
+      if (getTypeOf(oldValue) !== getTypeOf(value)) {
         deleteChild(key);
       }
       // update prop value
@@ -203,16 +221,18 @@ export function createProxy(value, onCopied, whenCommitted) {
       } else {
         target[key] = value;
       }
-      // update target of child proxy
-      proxyChildren.get(key)?.setTarget(value);
+      // update target of child proxy if set is not from child
+      if (!isBubbledUp) {
+        proxyChildren.get(key)?.setTarget(value);
+      }
       return true;
     });
   }
 
-  function deleteChild(key) {
-    const child = proxyChildren.get(key);
-    if (child) {
-      child.revoke();
+  function deleteChild(key, child) {
+    const kid = child || proxyChildren.get(key);
+    if (kid) {
+      kid.revoke();
       proxyChildren.delete(key);
     }
   }
