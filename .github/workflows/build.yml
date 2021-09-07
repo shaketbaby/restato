@@ -5,7 +5,7 @@ name: Node.js CI
 
 on:
   push:
-#    branches: [ main ]
+    branches: [ main ]
     paths: ['**.js', '**.jsx', '**.ts', '**.tsx', '**.yml']
   pull_request:
 #    branches: [ main ]
