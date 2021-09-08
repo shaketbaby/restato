@@ -187,5 +187,39 @@ test("Counter", async (t) => {
   // assertions
   expect(...);
 });
-
 ```
+
+# Note
+
+## Frozen Map, Set, Date, etc
+
+As mentioned above, object managed by store is frozen to prevent accidental mutating.
+
+For values like normal object and array, this can be done easily with `Object.freeze()`; but is a different story for other type of object like instances of Map, Set, Date and potentially other types. Objects of these types are special as they are just a wrapper, real value is hidden inside. `Object.freeze()` only freezes the wrapper. Their internal state can still be accessed by using the methods available the type's prototype object.
+```javascript
+const map = new Map();
+
+// this only freezes the wrapper object
+Object.freeze(map);
+
+// internal state can still be manipulated
+Map.prototype.set.call(map, "key", "value");
+```
+It seems monkey patching the prototype is the only way to work around this. But that may introduce more problem than it solves.
+
+Because of this, the frozen version of these objects are special in that they are only look like an instance of those types. They have all the methods avialble on the type but can't be used as receiver to call functions from those prototypes.
+```javascript
+function someAction(state) {
+  state.map = new Map(Object.entries({ key: "value" }));
+
+  // can be accessed like normal Map
+  state.map instanceof Map; // true
+  state.map.get("key") === "value";
+  state.map.set("key", "new value");
+
+  // will throw error
+  Map.prototype.get.call(state.map);
+  Map.prototype.set.call(state.map);
+}
+```
+This should be fine in most of the cases and if these objects are used as receiver by some library to call the functions of those prototype, error will be thrown to let client know. We feel this is better than letting the object gets mutated silently. As that could introduce unexpected behaviour and is very hard to debug.
