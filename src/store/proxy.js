@@ -1,7 +1,8 @@
-import { copy, deepFreeze, freezeCollection, getTypeOf, needsProxy } from "./utils.js";
+import { deepFreeze, getTypeOf, needsProxy, noop, shallowCopy } from "./utils.js";
 
 const ProxyTargets = {
   map: new Map(),
+  set: new Set(),
   object: {},
   array: [],
 };
@@ -29,10 +30,11 @@ export function createProxy(value, onCopied, whenCommitted) {
   let mutated = false;
   const proxyChildren = new Map();
   const isMap = target instanceof Map;
+  const isSet = target instanceof Set;
 
   const { proxy, revoke } = Proxy.revocable(
     ProxyTargets[getTypeOf(target)],
-    isMap ? mapHandler() : objectHandler()
+    isMap ? mapHandler() : (isSet ? setHandler() : objectHandler())
   );
   return Object.freeze({
     proxy,
@@ -50,17 +52,22 @@ export function createProxy(value, onCopied, whenCommitted) {
     setTarget(t) {
       // go through each child proxy, if their value has changed
       // then revoke child proxies if any of the follow is true
-      //   - type of their target has changed
-      //   - their target doesn't exist anymore
+      //  - type of their target has changed
+      //  - their target doesn't exist anymore
       // otherwise update child target
       proxyChildren.forEach((child, key) => {
-        const newValue = isMap ? t.get(key) : t[key];
-        const oldValue = isMap ? target.get(key) : target[key];
-        if(newValue !== oldValue) {
-          if (getTypeOf(newValue) === getTypeOf(oldValue)) {
-            child.setTarget(newValue);
-          } else {
-            deleteChild(key, child);
+        if (isSet) {
+          // delete if key doesn't exist in the new set
+          t.has(key) || deleteChild(key, child);
+        } else {
+          const newValue = isMap ? t.get(key) : t[key];
+          const oldValue = isMap ? target.get(key) : target[key];
+          if(newValue !== oldValue) {
+            if (getTypeOf(newValue) === getTypeOf(oldValue)) {
+              child.setTarget(newValue);
+            } else {
+              deleteChild(key, child);
+            }
           }
         }
       });
@@ -77,7 +84,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       has: (key) => target.has(key),
       get: (key) => getChild(key),
       set(key, value) {
-        setChild(key, deepFreeze(value));
+        setChild(key, value);
         return this; // return map proxy
       },
       delete(key) {
@@ -95,7 +102,6 @@ export function createProxy(value, onCopied, whenCommitted) {
         });
       },
       // no need to proxy map keys
-      // won't be able to get same value if key is mutated
       keys: () => target.keys(),
       values() {
         function next() {
@@ -127,6 +133,78 @@ export function createProxy(value, onCopied, whenCommitted) {
     return { get: (_, prop) => mapMethods[prop] };
   }
 
+  function setHandler() {
+    const setMethods = {
+      get size() { return target.size },
+      has: (value) => target.has(value),
+      add(value) {
+        target.has(value) || mutate(() => target.add(deepFreeze(value)));
+        return this; // return set proxy
+      },
+      delete(value) {
+        return target.has(value) && mutate(() => {
+          const r = target.delete(value);
+          deleteChild(value);
+          return r;
+        });
+      },
+      clear() {
+        target.size > 0 && mutate(() => {
+          proxyChildren.forEach(child => child.revoke());
+          proxyChildren.clear();
+          target.clear();
+        });
+      },
+      keys() {
+        return this.values()
+      },
+      values() {
+        function next() {
+          const r = Object.getPrototypeOf(this).next.call(this);
+          const { done, value } = r;
+          return done ? r : {
+            done,
+            value: getChild(value, (newVal) => mutate(noop, (v) => {
+              // update child proxy mapping
+              if (v === value) {
+                const child = proxyChildren.get(v);
+                proxyChildren.delete(v);
+                // newVal is freezable so new reference won't be
+                // created when it is frozen later when committed
+                proxyChildren.set(newVal, child);
+              }
+              return v === value ? newVal : v;
+            }))
+          };
+        }
+        return Object.freeze(
+          Object.defineProperty(target.values(), "next", { value: next })
+        );
+      },
+      entries() {
+        const it = this.values();
+        return Object.freeze({
+          [Symbol.iterator]: () => this.entries(),
+          next() {
+            const r = it.next();
+            const { done, value } = r;
+            return done ? r : { done, value: [value, value] };
+          }
+        });
+      },
+      [Symbol.iterator]() {
+        return this.entries();
+      },
+      forEach(cb, cbThis) {
+        const it = this.values();
+        for (let n = it.next(); !n.done; n = it.next()) {
+          cb.call(cbThis, n.value, n.value, this);
+        }
+      }
+    };
+    return { get: (_, prop) => setMethods[prop] };
+  }
+
   function objectHandler() {
     return {
       get(_, prop) {
@@ -139,7 +217,7 @@ export function createProxy(value, onCopied, whenCommitted) {
           // do not intercept and just pass through
           return Reflect.set(_, prop, value, receiver);
         }
-        return setChild(prop, deepFreeze(value));
+        return setChild(prop, value);
       },
 
       deleteProperty(_, prop) {
@@ -193,12 +271,12 @@ export function createProxy(value, onCopied, whenCommitted) {
     };
   }
 
-  function getChild(key) {
+  function getChild(key, onChildCopied = (v) => setChild(key, v, true)) {
     // create proxy if hasn't already
     let child = proxyChildren.get(key);
     if (!child) {
-      const value = isMap ? target.get(key) : target[key];
-      child = createProxy(value, (v) => setChild(key, v, true), whenCommitted);
+      const value = isSet ? key : (isMap ? target.get(key) : target[key]);
+      child = createProxy(value, onChildCopied, whenCommitted);
       if (child.revoke) {
         proxyChildren.set(key, child);
       }
@@ -215,15 +293,20 @@ export function createProxy(value, onCopied, whenCommitted) {
       if (getTypeOf(oldValue) !== getTypeOf(value)) {
         deleteChild(key);
       }
+
+      // freeze if value is not coming from child
+      // as there might be further mutations
+      const newValue = isBubbledUp ? value : deepFreeze(value);
+
       // update prop value
       if (isMap) {
-        target.set(key, value);
+        target.set(key, newValue);
       } else {
-        target[key] = value;
+        target[key] = newValue;
       }
       // update target of child proxy if set is not from child
       if (!isBubbledUp) {
-        proxyChildren.get(key)?.setTarget(value);
+        proxyChildren.get(key)?.setTarget(newValue);
       }
       return true;
     });
@@ -237,14 +320,14 @@ export function createProxy(value, onCopied, whenCommitted) {
     }
   }
 
-  function mutate(doMutate) {
+  function mutate(doMutate, copyItem) {
     if (!mutated) {
       // request to be notified on first mutation
       whenCommitted(commit);
 
       // make a copy if hasn't mutated
       // do not mutate committed target
-      target = copy(target);
+      target = shallowCopy(target, copyItem);
     }
 
     const result = doMutate();
@@ -261,10 +344,11 @@ export function createProxy(value, onCopied, whenCommitted) {
   // all new changes need to be made on a new copy and
   // need to be bubbled up again
   function commit() {
-    mutated = false
-    // free target if not revoked
-    if (target) {
-      (isMap ? freezeCollection : Object.freeze)(target);
+    if (mutated) {
+      mutated = false
+      // freeze target if not revoked
+      target && Object.freeze(target);
     }
   }
 }
+
