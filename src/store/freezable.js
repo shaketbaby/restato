@@ -1,9 +1,15 @@
-const FreezableSymbol = Symbol("freezable");
+const freezeSymbol = Symbol("freeze");
+const freezableSymbol = Symbol("freezable");
 
 const FreezableTypes = [
-  buildFreezableType(Map),
-  buildFreezableType(Set),
+  getFreezableType(Date),
+  getFreezableType(Map),
+  getFreezableType(Set),
 ];
+
+export function freeze(target) {
+  return (target[freezeSymbol] || Object.freeze)(target);
+}
 
 // there doesn't seem to be a way to really freeze Map/Set objects
 // because user can always mutate the object by doing something
@@ -15,7 +21,7 @@ const FreezableTypes = [
 // - considered a Map/Set: mapLike instanceOf Map === true
 // - throws error: Map.prototype.clear.call(mapLike)
 export function toFreezable(original) {
-  if (original[FreezableSymbol]) {
+  if (original[freezableSymbol]) {
     return original;
   }
 
@@ -27,38 +33,71 @@ export function toFreezable(original) {
     throw new TypeError("Non freezable value: " + original);
   }
 
-  // prevent raw value from being used directly
-  Object.freeze(Object.setPrototypeOf(original, null));
+  // prevent original value from being used directly
+  freezableType[freezeSymbol](Object.create(original));
 
   const proto = Object.create(freezableType, {
-    [FreezableSymbol]: {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: original,
-    }
+    [freezableSymbol]: { value: original }
   });
 
   return Object.create(proto);
 }
 
-function buildFreezableType(Constructor) {
-  return Object.freeze(
-    Object.create(Constructor.prototype, mapOwnValues(
-      Object.getOwnPropertyDescriptors(Constructor.prototype),
-      (desc) => mapOwnValues(desc, (value) => {
-        if (value instanceof Function) {
-          // return a function that always calls original function
-          // with this set to the original non-freezable instance
-          const fn = function(...args) {
-            return value.apply(this[FreezableSymbol], args);
-          };
-          return Object.defineProperty(fn, "name", { value: value.name });
-        }
-        return value;
-      }))
-    )
+function getFreezableType(type) {
+  const descriptors = mapOwnValues(
+    Object.getOwnPropertyDescriptors(type.prototype),
+    (desc) => mapOwnValues(desc, (value) => {
+      if (value instanceof Function) {
+        // return a function that always calls original function
+        // with this set to the original non-freezable instance
+        const fn = function (...args) {
+          return value.apply(this[freezableSymbol], args);
+        };
+        return Object.defineProperties(fn, {
+          length: { value: value.length },
+          name: { value: value.name },
+        });
+      }
+      return value;
+    })
   );
+  descriptors[freezeSymbol] = { value: getFreeze(type) };
+  return Object.freeze(Object.create(type.prototype, descriptors));
+}
+
+function getFreeze(type) {
+  const frozenProps = getFrozenDescriptors(type);
+  return function freeze(target) {
+    const proto = Object.getPrototypeOf(target);
+    // override mutating methods
+    Object.defineProperties(proto, frozenProps);
+    // freeze proto
+    Object.freeze(proto);
+    // freeze target itself
+    return Object.freeze(target);
+  }
+}
+
+function getFrozenDescriptors(type) {
+  let props;
+
+  if (type === Date) {
+    props = Object.getOwnPropertyNames(Date.prototype);
+    props = props.filter(k => k.startsWith("set"));
+  } else {
+    // Map or Set
+    const addOrSet = type === Set ? "add" : "set";
+    props = [addOrSet, "delete", "clear"];
+  }
+
+  const desc = { value: frozen };
+  return Object.fromEntries(props.map(p => [p, desc]));
+}
+
+function frozen() {
+  const tag = this[Symbol.toStringTag] ||
+    Object.getPrototypeOf(this)?.constructor?.name;
+  throw new TypeError(`Can not mutate frozen ${tag || "Object"}`);
 }
 
 function mapOwnValues(obj, doMap) {

@@ -1,11 +1,4 @@
-import { deepFreeze, getTypeOf, needsProxy, noop, shallowCopy } from "./utils.js";
-
-const ProxyTargets = {
-  map: new Map(),
-  set: new Set(),
-  object: {},
-  array: [],
-};
+import { deepFreeze, getTypeOf, needsProxy, noop, shallowCopy, shallowFreeze } from "./utils.js";
 
 /**
  * Create a new proxy which traps all interactions with the target.
@@ -29,14 +22,16 @@ export function createProxy(value, onCopied, whenCommitted) {
   let target = value;
   let mutated = false;
   const proxyChildren = new Map();
+
   const isMap = target instanceof Map;
   const isSet = target instanceof Set;
+  const isDate = target instanceof Date;
 
   const { proxy, revoke } = Proxy.revocable(
-    ProxyTargets[getTypeOf(target)],
-    isMap ? mapHandler() : (isSet ? setHandler() : objectHandler())
+    isDate ? new Date() : isMap ? new Map() : isSet ? new Set() : Array.isArray(target) ? [] : {},
+    isDate ? dateHandler() : isMap ? mapHandler() : isSet ? setHandler() : objectHandler(),
   );
-  return Object.freeze({
+  return {
     proxy,
     // revoke self and all proxy children
     revoke() {
@@ -58,7 +53,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       proxyChildren.forEach((child, key) => {
         if (isSet) {
           // delete if key doesn't exist in the new set
-          t.has(key) || deleteChild(key, child);
+          t.has(key) || deleteChildProxy(key, child);
         } else {
           const newValue = isMap ? t.get(key) : t[key];
           const oldValue = isMap ? target.get(key) : target[key];
@@ -66,7 +61,7 @@ export function createProxy(value, onCopied, whenCommitted) {
             if (getTypeOf(newValue) === getTypeOf(oldValue)) {
               child.setTarget(newValue);
             } else {
-              deleteChild(key, child);
+              deleteChildProxy(key, child);
             }
           }
         }
@@ -74,9 +69,21 @@ export function createProxy(value, onCopied, whenCommitted) {
       // update target
       target = t;
     }
-  });
+  };
 
   // internal implementation
+
+  function dateHandler() {
+    const dateMethods = {};
+    Reflect.ownKeys(Date.prototype).forEach(key => {
+      const isSet = key.startsWith?.("set");
+      dateMethods[key] = (...args) => {
+        const execute = () => target[key].apply(target, args);
+        return isSet ? mutate(execute) : execute();
+      }
+    });
+    return { get: (_, prop) => dateMethods[prop] };
+  }
 
   function mapHandler() {
     const mapMethods = {
@@ -90,7 +97,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       delete(key) {
         return target.has(key) && mutate(() => {
           const r = target.delete(key);
-          deleteChild(key);
+          deleteChildProxy(key);
           return r;
         });
       },
@@ -144,7 +151,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       delete(value) {
         return target.has(value) && mutate(() => {
           const r = target.delete(value);
-          deleteChild(value);
+          deleteChildProxy(value);
           return r;
         });
       },
@@ -223,7 +230,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       deleteProperty(_, prop) {
         return !Reflect.has(target, prop) || mutate(() => {
           const r = Reflect.deleteProperty(target, prop);
-          r && deleteChild(prop);
+          r && deleteChildProxy(prop);
           return r;
         });
       },
@@ -291,7 +298,7 @@ export function createProxy(value, onCopied, whenCommitted) {
       // for example, if prop changed from Array to Object
       // Array.isArray() will still return true for old proxy
       if (getTypeOf(oldValue) !== getTypeOf(value)) {
-        deleteChild(key);
+        deleteChildProxy(key);
       }
 
       // freeze if value is not coming from child
@@ -312,7 +319,7 @@ export function createProxy(value, onCopied, whenCommitted) {
     });
   }
 
-  function deleteChild(key, child) {
+  function deleteChildProxy(key, child) {
     const kid = child || proxyChildren.get(key);
     if (kid) {
       kid.revoke();
@@ -347,7 +354,7 @@ export function createProxy(value, onCopied, whenCommitted) {
     if (mutated) {
       mutated = false
       // freeze target if not revoked
-      target && Object.freeze(target);
+      target && shallowFreeze(target);
     }
   }
 }

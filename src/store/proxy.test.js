@@ -23,6 +23,8 @@ test("createProxy", async (t) => {
     switch (getTypeOf(proxy)) {
       case "array":
         return proxy.map(toNative);
+      case "date":
+        return new Date(proxy.getTime());
       case "map":
         const map = new Map();
         proxy.forEach((value, key) => map.set(key, toNative(value)));
@@ -209,7 +211,7 @@ test("createProxy", async (t) => {
       const lastMapCopy = lastCopy.map;
       ttt.equal(Object.isFrozen(lastCopy), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(lastMapCopy), true, "new map is frozen immediately");
-      ttt.throws(() => lastMapCopy.clear(), /Can not mutate frozen map/, "can not mutate frozen map");
+      ttt.throws(() => lastMapCopy.clear(), /Can not mutate frozen Map/, "can not mutate frozen map");
 
       const mapProxy = proxy.map;
 
@@ -663,15 +665,19 @@ test("createProxy", async (t) => {
 
       const date = new Date();
       ttt.equal(proxy.add(date), proxy, "can add new date and returns proxy");
+      ttt.equal(proxy.has(date), false, "has returns false for original date reference");
       ttt.deepEqual(toNative(copies), [new Set([1, arr]), new Set([1, arr, obj, date])], "mutates latest copy on subsequent add after commit");
       ttt.deepEqual(listeners.length, 1, "does not register a new commit listener on subsequent add after commit");
       ttt.deepEqual(Object.isFrozen(date), true, "newly added date is frozen after being added after commit");
+      ttt.throws(() => date.setTime(-1), /Can not mutate frozen Date/, "original date can not be mutated anymore");
+      const frozenDate = [...proxy.values()][proxy.size - 1];
+      ttt.deepEqual(toNative(frozenDate), date, "a frozen version is added");
 
       const map = new Map([["now", Date.now()]]);
       ttt.equal(proxy.add(map), proxy, "can add new map and returns proxy");
       ttt.equal(proxy.has(map), false, "has returns false for original map reference");
       ttt.deepEqual(Object.isFrozen(map), true, "original map should be frozen");
-      ttt.deepEqual(map instanceof Map, false, "original map is not considered Map anymore");
+      ttt.throws(() => map.set("now", -1), /Can not mutate frozen Map/, "original map can not be mutated anymore");
       const frozenMap = [...proxy.values()][proxy.size - 1];
       ttt.deepEqual(toNative(frozenMap), new Map(Map.prototype.entries.call(map)), "a frozen version is added");
 
@@ -679,7 +685,7 @@ test("createProxy", async (t) => {
       ttt.equal(proxy.add(set), proxy, "can add new set and returns proxy");
       ttt.equal(proxy.has(set), false, "has returns false for original set reference");
       ttt.deepEqual(Object.isFrozen(set), true, "original set should be frozen");
-      ttt.deepEqual(set instanceof Set, false, "original set is not considered Set anymore");
+      ttt.throws(() => set.add({}), /Can not mutate frozen Set/, "original set can not be mutated anymore");
       const frozenSet = [...proxy.values()][proxy.size - 1];
       ttt.deepEqual(toNative(frozenSet), new Set(Set.prototype.values.call(set)), "a frozen version is added");
 
@@ -795,5 +801,40 @@ test("createProxy", async (t) => {
       ttt.deepEqual(listeners.length, 2, "registers a commit listner for both set and value");
       ttt.deepEqual(toNative(proxy), toNative(copies[0]), "proxy reflects latest copy");
     });
+  });
+
+  t.test("for Date", async (tt) => {
+    const now = Date.now();
+    const expectedDate = new Date(now);
+    const target = deepFreeze(new Date(now));
+    const { proxy, copies, listeners, commit } = newProxy(target);
+
+    Reflect.ownKeys(Date.prototype).forEach(key => {
+      if (!key.startsWith?.("set")) {
+        if (key !== Symbol.toPrimitive) {
+          tt.equal(proxy[key](), expectedDate[key](), `${key} works as expected`);
+        } else {
+          tt.equal(proxy[key]("number"), expectedDate[key]("number"), `${key.toString()} works as expected`);
+        }
+      }
+    });
+
+    proxy.setFullYear(2000);
+    expectedDate.setFullYear(2000);
+    tt.equal(proxy.getTime(), expectedDate.getTime(), "setFullYear works as expected");
+    tt.equal(listeners.length, 1, "registers a commit listener on first set");
+    tt.deepEqual(toNative(copies), [expectedDate], "makes a copy on first set");
+    tt.equal(Object.isFrozen(copies[0]), false, "new copy is not frozen at first");
+
+    proxy.setTime(2000);
+    expectedDate.setTime(2000);
+    tt.equal(proxy.getTime(), expectedDate.getTime(), "setTime works as expected");
+    tt.deepEqual(toNative(copies), [expectedDate], "mutates latest copy on subsequent set");
+    tt.equal(listeners.length, 1, "does not register new commit listener on subsequent set");
+
+    commit();
+    tt.equal(Object.isFrozen(copies[0]), true, "copy is frozen after commit");
+    tt.equal(copies[0].getTime(), expectedDate.getTime(), "can still get from frozen date");
+    tt.throws(() => copies[0].setDate(1), /Can not mutate frozen Date/, "can not set frozen date");
   });
 });
