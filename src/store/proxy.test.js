@@ -372,7 +372,7 @@ test("createProxy", async (t) => {
       ttt.deepEqual(objectProxy.notTouchedTypeWillChange, ["not touched"], "returns new value for not touched child");
     });
 
-    tt.test("reassign a Set prop", async(ttt) => {
+    tt.test("reassign a Set prop", async (ttt) => {
       const now = Date.now();
       const obj = {};
       const arr = [now];
@@ -811,10 +811,15 @@ test("createProxy", async (t) => {
 
     Reflect.ownKeys(Date.prototype).forEach(key => {
       if (!key.startsWith?.("set")) {
-        if (key !== Symbol.toPrimitive) {
-          tt.equal(proxy[key](), expectedDate[key](), `${key} works as expected`);
-        } else {
-          tt.equal(proxy[key]("number"), expectedDate[key]("number"), `${key.toString()} works as expected`);
+        switch(key) {
+          case Symbol.toPrimitive:
+            tt.equal(proxy[key]("number"), expectedDate[key]("number"), `${key.toString()} works as expected`);
+            break;
+          case "constructor":
+            tt.deepEqual(new proxy[key](now), new Date(now), `${key} works as expected`);
+            break;
+          default:
+            tt.equal(proxy[key](), expectedDate[key](), `${key} works as expected`);
         }
       }
     });

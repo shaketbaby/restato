@@ -82,6 +82,8 @@ export function createProxy(value, onCopied, whenCommitted) {
         return isSet ? mutate(execute) : execute();
       }
     });
+    // do not override special ones
+    dateMethods.constructor = Date.prototype.constructor;
     return { get: (_, prop) => dateMethods[prop] };
   }
 
