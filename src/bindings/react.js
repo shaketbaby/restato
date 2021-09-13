@@ -19,12 +19,12 @@ function createReactStore(initState) {
 }
 
 // default global store
-const globalStore = createReactStore();
-const { dispatch, select, useSelector } = globalStore;
+const reactStore = createReactStore();
+const { dispatch, select, useSelector } = reactStore;
 
-export { 
+export {
   createReactStore as createStore,
-  globalStore as store,
+  reactStore as store,
   useSelector,
   dispatch,
   select,

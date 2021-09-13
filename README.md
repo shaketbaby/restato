@@ -153,6 +153,12 @@ To help with using restato, following bindings have been provided.
 React binding is a thin wrapper around the store. It provides a `useSelector` hook for using in UI component.
 
 ```javascript
+// below requires a bundler that supports Subpath exports, see https://nodejs.org/api/packages.html#packages_subpath_exports
+// for bundlers that don't support subpath exports, need to do
+//
+// import { reactStore } from "restato";
+// const { dispatch, useSelector } = reactStore;
+//
 import { dispatch, useSelector } from "restato/react";
 
 function Counter() {
@@ -167,6 +173,8 @@ function Counter() {
 
 Above example uses the `dispatch` and `useSelector` from the default global store. You can also create a local store if the global one is not suitable.
 ```javascript
+// for bundlers don't support subpath exports, do
+// import { createReactStore as createStore } from "restato";
 import { createStore } from "restato/react";
 
 const store = createStore();

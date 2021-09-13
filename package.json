@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "A minimal and flexible store inspired by Redux",
   "type": "module",
-  "main": "./src/store/index.js",
+  "main": "./src/index.js",
   "exports": {
     ".": "./src/store/index.js",
     "./react": "./src/bindings/react.js"
