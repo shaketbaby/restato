@@ -1,8 +1,8 @@
-import { createStore } from "./store/index.js";
+export { createStore } from "./store/index.js";
 
-import {
+export {
   store as reactStore,
   createStore as createReactStore
 } from "./bindings/react.js";
 
-export { createStore, createReactStore, reactStore };
+export { default as reduxDevToolsMiddleware } from "./middlewares/redux-devtools.js"

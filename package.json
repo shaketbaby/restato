@@ -6,7 +6,8 @@
   "main": "./src/index.js",
   "exports": {
     ".": "./src/store/index.js",
-    "./react": "./src/bindings/react.js"
+    "./react": "./src/bindings/react.js",
+    "./middlewares/*": "./src/middlewares/*.js"
   },
   "scripts": {
     "test": "tape src/**/*.test.js | tap-spec"

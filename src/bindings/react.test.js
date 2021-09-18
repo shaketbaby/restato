@@ -3,7 +3,7 @@ import React from 'react';
 import globalJsDom from 'global-jsdom';
 import { render, fireEvent } from '@testing-library/react';
 
-import { dispatch, useSelector } from "./react.js";
+import { dispatch, useSelector, store } from "./react.js";
 
 test("ReactStore", async (t) => {
   function Counter() {
@@ -15,12 +15,14 @@ test("ReactStore", async (t) => {
   const cleanup = globalJsDom();
 
   // initialise store
-  dispatch((state) => state.count = 0);
+  store.setState({ count: 0 });
 
-  const { queryByRole, findByText } = render(React.createElement(Counter));
+  const { queryByRole, queryByText, findByText } = render(
+    React.createElement(Counter)
+  );
   const button = queryByRole("button");
 
-  t.equal(await findByText("0"), button);
+  t.equal(queryByText("0"), button);
 
   fireEvent.click(button);
   t.equal(await findByText("1"), button);

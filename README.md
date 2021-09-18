@@ -49,6 +49,8 @@ State passed in can be mutated in place. Store will manage the mutations and app
 
 Actions are dispatched asynchronously and multiple actions may be batched and be processed together.
 
+It's recommened to group actions by feature and put into a folder. Each action should have a name which will be used as the type by the Redux DevTools middleware. See below middleware section for details.
+
 ```javascript
 // get dispatch form a store object
 const { dispatch } = store;
@@ -79,8 +81,7 @@ async function asyncAction(state) {
 dispatch(asyncAction);
 ```
 
-Since action is just a normal function, an action can call another
-action just like any function. This makes it easy to reuse codes.
+Since action is just a normal function, an action can call another action just like any function. This makes it easy to reuse codes.
 
 ```javascript
 function actionOne(state) {
@@ -144,6 +145,81 @@ const unsub = subscribe(selector);
 unsub(); // selector won't be called on state changes
 ```
 
+## Middlewares
+
+Middleware can be used to tap into the action dispatching and state mutating flow. For example, to delay the dispatching, or even stop the dispatching, etc.
+
+Middlewares can be registered with `store.addMiddlewares(middleware1, middleware1, ...)` method.
+
+A middleware factory function should be passed to `addMiddlewares`. This function will be called with a `store` that has `getState()`, `setState(newState)` and `dispatch(action, ...args)` methods. It should return an object with 3 methods: `execute(action, args, next)`, `asyncExecuted(action, args, next)` and `destroy()`. All 3 methods are optional and is called at various point of an action's lifecyle.
+
+The middlewares are applied in the same order as they are added. The first one will be given the original action and args passed to `store.dispatch()`; it is expected to call `next(action, args)`, with either the original action & args or a different one, to pass the control to next middleware; this is repeated until the last middleware where the action will be executed when `next(action, args)` is called.
+
+```javascript
+const loggerMiddleware = ({
+  getState, // get current state
+  setState, // set new state immediately
+  dispatch  // dispatch an action as normal
+}) => {
+  return {
+    // execute is called when an action is about to be executed
+    // this can be an async function if needed to say delay the dispatch
+    execute(action, args, next) {
+      console.log("pre dispatch", action.name, getState());
+
+      // passing action and args to next middleware
+      // action dispatching will stop if next() is not called
+      // can just pass the provided action & args or a new action as needed
+      // aciton will be executed if this is the last middle in the chain
+      next(action, args);
+
+      console.log("post dispatch", action.name, getState());
+    },
+
+    // asyncExecuted is called after state is mutated by an action's async codes
+    // for example, in the callback passed to "promise.then".
+    // calling next() synchronously indicates mutations should be committed;
+    // mutations will be discarded if next()
+    // - is not called or
+    // - is called asynchronously later
+    asyncExecuted(action, args, next) {
+      console.log("async operation");
+
+      // calls next middleware in the chain
+      // mutations will be discarded if next() is not called
+      next();
+    }
+
+    // called when store is being destroyed
+    destroy() {
+      // do any clean up required
+    }
+  };
+};
+
+store.addMiddlewares(logger);
+```
+
+### Dispatch additional actions
+
+Middlewares can dispatch additional actions during initialisation, in `execute` or `asyncExecuted` by calling `dispatch()` on the passed in `store` object. These actions will go through the middleware chain like a normal action. Since actions are dispatched asynchronously, the order of dispatching is indeterministic.
+
+### Redux DevTools
+
+A middleware is provided for connecting to Redux DevTools extension.
+```javascript
+import reduxDevTools from "restato/middlewares/redux-devtools";
+// below if bundler doesn't support Subpath exports
+// see https://nodejs.org/api/packages.html#packages_subpath_exports
+//
+// import { reduxDevToolsMiddleware } from "restato";
+
+store.addMiddlewares(reduxDevTools(/* options */));
+```
+Redux DevTools expect action to have a `type` string. This middleware will use action function's name as type. If action doesn't have a name, `/anonymous` will be used. For async mutations, `/async` suffix will be appended to differentiate with synchronous mutations from the same action.
+
+![Redux DevTools Middleware](https://raw.githubusercontent.com/shaketbaby/restato/main/src/middlewares/redux-devtools.gif)
+
 ## Bindings
 
 To help with using restato, following bindings have been provided.
@@ -183,11 +259,12 @@ const store = createStore();
 
 ## Testing
 
-A common requirement for writing tests for UI components is to initialise store to a certain state. That can be done easily by dispatching a special action that set store to the expected state.
+A common requirement for writing tests for UI components is to initialise store to a certain state. That can be done easily by calling `store.setState()` to set store to the required state.
+
 ```javascript
 test("Counter", async (t) => {
   // initialise store to required state
-  dispatch((state) => state.count = 0);
+  store.setState({ count: 0 });
 
   // then render component
   render(<Counter/>);

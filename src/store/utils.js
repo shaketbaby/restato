@@ -1,8 +1,10 @@
 import { freeze, toFreezable } from "./freezable.js";
 
-export const noop = () => { };
+export const noop = () => {};
 
 export const identity = v => v;
+
+export const inherit = (base, obj) => Object.setPrototypeOf(obj, base);
 
 export function getTypeOf(value) {
   if (value === null) {

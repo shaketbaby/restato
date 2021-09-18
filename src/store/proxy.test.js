@@ -1,6 +1,6 @@
 import test from "tape";
 
-import { deepFreeze, getTypeOf } from "./utils.js";
+import { deepFreeze, getTypeOf, noop } from "./utils.js";
 import { createProxy } from "./proxy.js";
 
 test("createProxy", async (t) => {
@@ -9,7 +9,7 @@ test("createProxy", async (t) => {
     const listeners = [];
     const onCopied = (copy) => copies.push(copy);
     const whenComitted = (listener) => listeners.push(listener);
-    const { proxy, revoke } = createProxy(target, onCopied, whenComitted);
+    const { proxy, revoke } = createProxy(target, onCopied, whenComitted, noop);
     const commit = () => {
       listeners.forEach(l => l());
       listeners.length = 0; // empty listeners array
