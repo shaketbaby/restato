@@ -16,6 +16,13 @@ yarn add restato
 
 # Usages
 
+- [Store](#store)
+- [Action](#action)
+- [Selector](#selector)
+- [Middlewares](#middlewares)
+- [Bindings](#bindings)
+- [Testing](#testing)
+
 ## Store
 
 States are managed by a store.
