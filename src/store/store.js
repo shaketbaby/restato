@@ -179,10 +179,9 @@ export function createStore(initState = {}) {
   }
 
   function schedule(getGuard, fn) {
-    Promise.resolve(getGuard()).then(old => {
-      // run if there are no more changes
-      getGuard() === old && fn();
-    })
+    const guard = getGuard();
+    // run if there are no more changes
+    queueMicrotask(() => getGuard() === guard && fn());
   }
 
   function callIgnoreError(fn, ...args) {
