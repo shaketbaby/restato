@@ -9,6 +9,11 @@
     "./react": "./src/bindings/react.js",
     "./middlewares/*": "./src/middlewares/*.js"
   },
+  "typesVersions": {
+    "*": {
+      "*": ["types/*", "types"]
+    }
+  },
   "scripts": {
     "test": "tape src/**/*.test.js | tap-spec"
   },
