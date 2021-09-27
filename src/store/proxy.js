@@ -39,7 +39,7 @@ export function createProxy(initTarget, initParent) {
         parent?.detach();
         // attch to new parent
         if (parent = p) {
-          parent.onCopied(target);
+          parent.onCopied(target, true);
         }
       }
     },
@@ -254,8 +254,11 @@ export function createProxy(initTarget, initParent) {
     // create proxy if hasn't already
     let child = proxyChildren.get(key);
     if (!child) {
-      refreshTarget();
-      child = adoptOrCreateChild(key);
+      const childValue = getProp(refreshTarget(), key);
+      child = createProxy(childValue, createParent(key));
+      if (isProxy(child.proxy)) {
+        proxyChildren.set(key, child);
+      }
     }
     return child.proxy;
   }
@@ -269,7 +272,7 @@ export function createProxy(initTarget, initParent) {
       const child = newValue[proxySymbol];
       // ignore if same proxy is set back
       if (proxyChildren.get(key) !== child) {
-        adoptOrCreateChild(key, child);
+        adoptChild(key, child);
       }
     } else {
       const oldValue = getProp(refreshTarget(), key);
@@ -283,32 +286,40 @@ export function createProxy(initTarget, initParent) {
   }
 
   function addChild(value) {
-    if (!refreshTarget().has(value)) {
-      const newValue = proxify(value);
-      // newValue may not be a proxy if value
-      // - is simple value like string or
-      // - does not contain proxy
-      if (isProxy(newValue)) {
-        const child = newValue[proxySymbol];
-        const key = child.getTarget();
-        // ignore if same proxy is added back
-        if (proxyChildren.get(key) !== child) {
-          adoptOrCreateChild(key, child);
-          target.add(key);
-        }
-      } else {
-        mutate(() => target.add(newValue));
+    const newValue = proxify(value);
+    // newValue may not be a proxy if value
+    // - is simple value like string or
+    // - does not contain proxy
+    if (isProxy(newValue)) {
+      const child = newValue[proxySymbol];
+      const key = child.getTarget();
+      // ignore if same proxy is added back
+      if (proxyChildren.get(key) !== child) {
+        adoptChild(key, child);
       }
+    } else {
+      !refreshTarget().has(value) && mutate(() => target.add(newValue));
     }
   }
 
-  function adoptOrCreateChild(key, child) {
-    const childParent = {
+  function adoptChild(key, child) {
+    refreshTarget();
+    child.setParent(createParent(key));
+    proxyChildren.set(key, child);
+  }
+
+  function createParent(key) {
+    return {
       detach: () => proxyChildren.delete(key),
       refresh: () => parent?.refresh(),
-      onCopied: !(target instanceof Set)
-        ? (newVal) => mutate(() => setProp(target, key, newVal))
-        : (newVal) => {
+      onCopied: (newVal, adopting) => {
+        if (getProp !== setGet) {
+          return mutate(() => setProp(target, key, newVal));
+        }
+        // Set needs special treatment
+        if (adopting) {
+          !target.has(newVal) && mutate(() => target.add(newVal));
+        } else {
           // Set doesn't support updating an item in place unfortunately
           // need to make a copy when item turns into mutated state
           mutated = false;
@@ -324,23 +335,10 @@ export function createProxy(initTarget, initParent) {
               }
             }
             return v === key ? newVal : v;
-          })
+          });
         }
+      }
     };
-
-    let childToAdopt = child;
-    // create a new child if required
-    if (!child) {
-      const childValue = getProp(target, key);
-      childToAdopt = createProxy(childValue, childParent);
-    }
-
-    if (isProxy(childToAdopt.proxy)) {
-      // set parent if child is not new
-      child && childToAdopt.setParent(childParent);
-      proxyChildren.set(key, childToAdopt);
-    }
-    return childToAdopt;
   }
 
   function deleteChild(key, child) {
@@ -409,10 +407,10 @@ function proxify(value) {
   // lazy creating proxy only if needed
   const getProxy = () => proxy || (proxy = createProxy(frozen).proxy);
   // adopt child proxy deteced
-  const handle = (k, v, addOrSet) => {
+  const handle = (k, v, addOrSet, always) => {
     const child = proxify(v);
-    //
-    (isProxy(child) || child !== v) && addOrSet(getProxy(), k, child);
+    // always add for Set as we can't update item
+    (always || isProxy(child) || child !== v) && addOrSet(getProxy(), k, child);
   }
   // deep detect proxy child and freeze along the way
   switch(getTypeOf(frozen)) {
@@ -426,7 +424,8 @@ function proxify(value) {
       frozen.forEach((v, k) => handle(k, v, mapSet));
       break;
     case "set":
-      frozen.forEach((v, k) => handle(k, v, setAdd));
+      getProxy().clear();
+      value.forEach((v, k) => handle(k, v, setAdd, true));
       break;
     default:
   }

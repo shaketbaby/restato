@@ -853,15 +853,27 @@ test("createProxy", async (t) => {
 
     setProxy = proxy.set;
     proxy.obj = { nested: { arr: [proxy.set] } };
-    const expectedCopies = [
+    let expectedCopies = [
       {
         set: new Set([now]),
         set2: new Set([now, 0]),
         obj: { nested: { arr: [new Set([now])] } }
       }
     ];
+    tt.notEqual(proxy.set, setProxy, "proxy ref does not point to original prop");
     tt.equal(proxy.obj.nested.arr[0], setProxy, "proxy ref to nested prop points to newly adopted prop");
     tt.deepEqual(toNative(copies), expectedCopies, "can set proxy as value of a nested prop");
+
+    setProxy.add(-1);
+    setProxy.add({ now });
+    expectedCopies = [
+      {
+        set: new Set([now]),
+        set2: new Set([now, 0]),
+        obj: { nested: { arr: [new Set([now, -1, { now }])] } }
+      }
+    ];
+    tt.deepEqual(toNative(copies), expectedCopies, "mutations to set proxy ref are reflected in new prop");
 
     commit();
     tt.equal(Object.isFrozen(copies[0].obj.nested.arr), true);
@@ -888,14 +900,56 @@ test("createProxy", async (t) => {
       new Set([{ arr: [now] }, [now]]),
       new Set([{ arr: [now] }, [0]])
     ];
-    tt.deepEqual(toNative(copies), expectedCopies, "changes are refected in copies");
+    tt.deepEqual(toNative(copies), expectedCopies, "make a new copy when item is mutated the first time");
 
-    proxy.add({ nested: { arr: arrProxy } });
+    arrProxy[0] = 1;
     expectedCopies = [
       new Set([{ arr: [now] }, [now]]),
-      new Set([{ arr: [now] }, [0]]),
-      new Set([{ arr: [now] }, [0], { nested: { arr: [0] } }])
+      new Set([{ arr: [now] }, [1]])
+    ];
+    tt.deepEqual(toNative(copies), expectedCopies, "no new copy when item is mutated again");
+
+    proxy.add(new Map([["nested", new Set([arrProxy])]]));
+    expectedCopies = [
+      new Set([{ arr: [now] }, [now]]),
+      new Set([{ arr: [now] }, [1], new Map([["nested", new Set([[1]])]])]) // in place as proxy was mutated already
     ];
     tt.deepEqual(toNative(copies), expectedCopies, "can add proxy as value of a nested prop");
+  });
+
+  t.test("behaviour when adopting a proxy", async (tt) => {
+    const target = deepFreeze({ obj: { count: 0 } });
+    const { proxy, commit } = newProxy(target);
+
+    const objProxy = proxy.obj;
+    proxy.obj2 = objProxy; // assign proxy to a new prop
+
+    tt.comment("mutate for the first time");
+
+    // objProxy has not been mutated
+    // mutations will only be refected in new prop
+    objProxy.count++;
+    tt.equal(proxy.obj.count, 0, "original prop is not mutated");
+    tt.equal(proxy.obj2.count, 1, "new prop is mutated");
+
+    proxy.obj3 = objProxy; // assign to yet another new prop
+
+    tt.comment("mutate the proxy again");
+
+    // now objProxy is in mutated state
+    // mutations will be refelcted in both props
+    objProxy.count++;
+    tt.equal(proxy.obj.count, 0, "original prop is not mutated");
+    tt.equal(proxy.obj2.count, 2, "old prop is mutated");
+    tt.equal(proxy.obj3.count, 2, "new prop is mutated");
+
+    commit();
+
+    // values are frozen after commit,
+    // further mutation will only be made to latest prop
+    objProxy.count++;
+    tt.equal(proxy.obj.count, 0, "original prop is not mutated after commit");
+    tt.equal(proxy.obj2.count, 2, "old prop is not mutated after commit");
+    tt.equal(proxy.obj3.count, 3, "new prop is mutated after commit");
   });
 });
