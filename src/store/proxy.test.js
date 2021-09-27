@@ -5,16 +5,21 @@ import { createProxy } from "./proxy.js";
 
 test("createProxy", async (t) => {
   function newProxy(target) {
+    let latest = target;
     const copies = [];
     const listeners = [];
-    const onCopied = (copy) => copies.push(copy);
-    const whenComitted = (listener) => listeners.push(listener);
-    const { proxy, revoke } = createProxy(target, onCopied, whenComitted, noop);
-    const commit = () => {
+    const { proxy, setTarget, commit } = createProxy(target, {
+      detach: noop,
+      refresh: () => setTarget(latest),
+      onCopied: (copy) => {
+        listeners.push(commit);
+        copies.push(latest = copy);
+      },
+    });
+    return { proxy, copies, listeners, commit() {
       listeners.forEach(l => l());
       listeners.length = 0; // empty listeners array
-    };
-    return { proxy, copies, listeners, commit, revoke };
+    } };
   }
 
   // tape.deepEqual doesn't like the Map proxy
@@ -101,6 +106,9 @@ test("createProxy", async (t) => {
       ttt.deepEqual(copies, expectedCopies, "after commit, make another copy when mutate again");
       ttt.deepEqual(proxy, copies[1], "proxy and last copy have same content");
 
+      proxy.newProp = null;
+      ttt.equal(proxy.newProp, null, "can set prop to null");
+
       ttt.deepEqual(target, {}, "target is left untouched");
     });
 
@@ -124,7 +132,7 @@ test("createProxy", async (t) => {
       ttt.notEqual(lastCopy.object, lastObjectCopy, "make a copy for nested object")
       ttt.equal(copies[0], lastCopy, "mutate root copy in place when mutate nested object");
       ttt.deepEqual(copies, [{ object: { prop: 100 } }], "copy relfects latest changes");
-      ttt.deepEqual(listeners.length, 2, "registers commit listener on first mutate to nested object");
+      ttt.deepEqual(listeners.length, 1, "does not register another commit listener when mutate nested object");
 
       commit();
       ttt.equal(Object.isFrozen(lastCopy), true, "copy is frozen after commit");
@@ -139,14 +147,13 @@ test("createProxy", async (t) => {
       ];
       ttt.deepEqual(copies, expectedCopies, "after commit, make another copy when mutate again");
       ttt.deepEqual(proxy, copies[1], "proxy and last copy have same content");
-      ttt.deepEqual(listeners.length, 2, "registers commit listener for each proxy again after commit");
+      ttt.deepEqual(listeners.length, 1, "registers another commit listener when mutate again after commit");
 
       proxy.object = { another: true };
-      ttt.deepEqual(objectProxy, { another: true }, "existing nested proxy points to new value when prop is set to a new value of same type");
+      ttt.deepEqual(objectProxy, { prop: 100, newProp: true }, "existing nested proxy points to original value when prop is set to a new value of same type");
 
       proxy.object = [];
-      const revokedErrpr = /Cannot perform 'get' on a proxy that has been revoked/;
-      ttt.throws(() => objectProxy.length, revokedErrpr, "existing nested proxy is revoked when prop is set to a value of different type");
+      ttt.deepEqual(objectProxy, { prop: 100, newProp: true }, "existing nested proxy points to original value when prop is set to a value of different type");
 
       ttt.deepEqual(target, {}, "target is left untouched");
     });
@@ -171,7 +178,7 @@ test("createProxy", async (t) => {
       ttt.notEqual(lastCopy.array, lastArrayCopy, "make a copy for nested array")
       ttt.equal(copies[0], lastCopy, "mutate root copy in place when mutate nested array");
       ttt.deepEqual(copies, [{ array: [100] }], "copy relfects latest changes");
-      ttt.deepEqual(listeners.length, 2, "registers commit listener on first mutate to nested array");
+      ttt.deepEqual(listeners.length, 1, "does not register another commit listener when mutate nested array");
 
       commit();
       ttt.equal(Object.isFrozen(lastCopy), true, "copy is frozen after commit");
@@ -186,14 +193,13 @@ test("createProxy", async (t) => {
       ];
       ttt.deepEqual(copies, expectedCopies, "after commit, make another copy when mutate again");
       ttt.deepEqual(proxy, copies[1], "proxy and last copy have same content");
-      ttt.deepEqual(listeners.length, 2, "registers commit listener for each proxy again after commit");
+      ttt.deepEqual(listeners.length, 1, "registers another commit listener after commit");
 
       proxy.array = ["another"];
-      ttt.deepEqual(arrayProxy, ["another"], "existing nested proxy points to new value when prop is set to a new value of same type");
+      ttt.deepEqual(arrayProxy, [100, true], "existing nested proxy points to original value when prop is set to a new value of same type");
 
       proxy.array = { length: 1 };
-      const revokedErrpr = /Cannot perform 'get' on a proxy that has been revoked/;
-      ttt.throws(() => arrayProxy.length, revokedErrpr, "existing nested proxy is revoked when prop is set to a value of different type");
+      ttt.deepEqual(arrayProxy, [100, true], "existing nested proxy is pointing to original value when prop is set to a value of different type");
 
       ttt.deepEqual(target, {}, "target is left untouched");
     });
@@ -219,7 +225,7 @@ test("createProxy", async (t) => {
       ttt.notEqual(lastCopy.map, lastMapCopy, "make a copy for nested map")
       ttt.equal(copies[0], lastCopy, "mutate root copy in place when mutate nested map");
       ttt.deepEqual(toNative(copies), [{ map: new Map([["prop", 100]]) }], "copy relfects latest changes");
-      ttt.deepEqual(listeners.length, 2, "registers commit listener on first mutate to nested map");
+      ttt.deepEqual(listeners.length, 1, "does not register new commit listener when mutate nested map");
 
       commit();
       ttt.equal(Object.isFrozen(lastCopy), true, "copy is frozen after commit");
@@ -234,14 +240,13 @@ test("createProxy", async (t) => {
       ];
       ttt.deepEqual(toNative(copies), expectedCopies, "after commit, make another copy when mutate again");
       ttt.deepEqual(toNative(proxy), expectedCopies[1], "proxy and last copy have same content");
-      ttt.deepEqual(listeners.length, 2, "registers commit listener for each proxy again after commit");
+      ttt.deepEqual(listeners.length, 1, "registers another commit listener when mutate again");
 
       proxy.map = new Map([["another", true]]);
-      ttt.deepEqual(toNative(mapProxy), new Map([["another", true]]), "existing nested proxy points to new value when prop is set to a new value of same type");
+      ttt.deepEqual(toNative(mapProxy), new Map([["prop", 100], ["newProp", true]]), "existing nested proxy points to original value when prop is set to a new value of same type");
 
       proxy.map = { size: 1 };
-      const revokedErrpr = /Cannot perform 'get' on a proxy that has been revoked/;
-      ttt.throws(() => mapProxy.size, revokedErrpr, "existing nested proxy is revoked when prop is set to a value of different type");
+      ttt.equal(mapProxy.has("another"), false, "existing nested proxy is pointing to original value when prop is set to a value of different type");
 
       ttt.deepEqual(target, {}, "target is left untouched");
     });
@@ -253,12 +258,11 @@ test("createProxy", async (t) => {
       const arrayProxy = proxy.array;
       const objectProxy = arrayProxy[0];
       const mapProxy = proxy.array[0].map;
-      const revokedErrpr = /Cannot perform 'get' on a proxy that has been revoked/;
 
       delete objectProxy.map;
       ttt.deepEqual(objectProxy, {}, "can delete a prop from nested object");
-      ttt.throws(() => mapProxy.size, revokedErrpr, "existing nested proxy is revoked when prop is deleted");
-      ttt.deepEqual(listeners.length, 3, "registers a commit listener for each mutated proxy");
+      ttt.deepEqual(mapProxy.size, 0, "existing nested proxy still works after prop is deleted");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listener on first delete");
       ttt.deepEqual(copies, [{ num: 1, array: [{}] }], "make a copy on first delete");
       ttt.equal(Object.isFrozen(copies[0]), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(copies[0].array), false, "copy is not frozen at first");
@@ -275,10 +279,8 @@ test("createProxy", async (t) => {
       ttt.deepEqual(listeners.length, 0, "commit listeners are cleared after commit");
 
       delete proxy.array;
-      ttt.throws(() => arrayProxy.length, revokedErrpr, "existing nested proxy is revoked when prop is deleted");
-      ttt.throws(() => objectProxy.foo, revokedErrpr, "existing child proxy of the deleted prop is also revoked");
       ttt.deepEqual(copies, [{ array: [{}] }, {}], "make a copy again on first delete after commit");
-      ttt.deepEqual(listeners.length, 1, "registers a commit listener for each mutated proxy");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listener on first delete after commit");
 
       ttt.deepEqual(toNative(target), { num: 1, array: [{ map: new Map() }] }, "target is left untouched");
     });
@@ -291,7 +293,7 @@ test("createProxy", async (t) => {
       ttt.deepEqual(values, [1, {}], "can get object values");
 
       values[1].prop = "value";
-      ttt.deepEqual(listeners.length, 2, "registers commit listener for each proxy");
+      ttt.deepEqual(listeners.length, 1, "registers commit listener when mutate a value");
       ttt.deepEqual(copies, [{ num: 1, object: { prop: "value" } }], "make a copy when mutate a value");
       ttt.equal(Object.isFrozen(copies[0]), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(copies[0].object), false, "object copy is not frozen at first");
@@ -309,7 +311,7 @@ test("createProxy", async (t) => {
       ttt.deepEqual(values, [["num", 1], ["object", {}]], "can get object entries");
 
       values[1][1].prop = "value";
-      ttt.deepEqual(listeners.length, 2, "registers a commit listener for each proxy");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listener when mutate a value");
       ttt.deepEqual(copies, [{ num: 1, object: { prop: "value" } }], "make a copy when mutate a value");
       ttt.equal(Object.isFrozen(copies[0]), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(copies[0].object), false, "object copy is not frozen at first");
@@ -339,10 +341,11 @@ test("createProxy", async (t) => {
     });
 
     tt.test("reassign prop", async (ttt) => {
+      const now = Date.now() + 1000;
       const target = deepFreeze({
         object: {
-          wontExist: {},
-          typeWillChange: {},
+          wontExist: { now },
+          typeWillChange: { now },
           valueWillChange: { k: "v" },
           notTouchedTypeWillChange: {},
         }
@@ -358,23 +361,21 @@ test("createProxy", async (t) => {
         valueWillChange: { k: "v2" },
         notTouchedTypeWillChange: ["not touched"],
       };
-      const revokedErrpr = /Cannot perform 'get' on a proxy that has been revoked/;
-      ttt.equal(Reflect.has(objectProxy, "wontExist"), false, "old proxy of updated prop does not have removed child prop");
-      ttt.throws(() => wontExistProxy.foo, revokedErrpr, "old proxy of removed child prop is revoked");
-      ttt.equal(objectProxy.wontExist, undefined, "returns undefined for removed child prop");
+      ttt.deepEqual(objectProxy.wontExist, { now }, "returns original value for removed child prop");
+      ttt.equal(wontExistProxy.now, now, "old proxy of removed child prop is pointing to old prop");
 
-      ttt.throws(() => typeWillChangeProxy.foo, revokedErrpr, "old proxy of type changing child is revoked");
-      ttt.deepEqual(objectProxy.typeWillChange, [], "returns new value for type changing child");
+      ttt.deepEqual(typeWillChangeProxy, { now }, "old proxy of type changing child is pointing to old value");
+      ttt.deepEqual(objectProxy.typeWillChange, { now }, "returns original value for type changing child");
 
-      ttt.deepEqual(valueWillChangeProxy, { k: "v2" }, "old proxy of value changing child reflects latest value");
-      ttt.deepEqual(objectProxy.valueWillChange, { k: "v2" }, "returns new value for value changing child");
+      ttt.deepEqual(valueWillChangeProxy, { k: "v" }, "old proxy of value changing child reflects old value");
+      ttt.deepEqual(objectProxy.valueWillChange, { k: "v" }, "returns old value for value changing child");
 
-      ttt.deepEqual(objectProxy.notTouchedTypeWillChange, ["not touched"], "returns new value for not touched child");
+      ttt.deepEqual(objectProxy.notTouchedTypeWillChange, {}, "returns old value for not touched child");
     });
 
     tt.test("reassign a Set prop", async (ttt) => {
       const now = Date.now();
-      const obj = {};
+      const obj = { now };
       const arr = [now];
       const target = deepFreeze({ set: new Set([obj, arr]) });
 
@@ -382,16 +383,15 @@ test("createProxy", async (t) => {
       const [objProxy, arrayProxy] = [...proxy.set.values()];
 
       proxy.set = new Set([{}, arr]);
-      const revokedErrpr = /Cannot perform 'get' on a proxy that has been revoked/;
-      ttt.deepEqual(arrayProxy, [now], "old proxy of non-removed set value is still usable");
-      ttt.throws(() => objProxy.foo, revokedErrpr, "old proxy of removed set value is revoked");
+      ttt.equal(objProxy.now, now, "old proxy of removed set value still points to original value");
+      ttt.deepEqual(arrayProxy, [now], "old proxy of non-removed set value still points to original value");
     });
   });
 
   t.test("for Array", async (tt) => {
     tt.test("basic operations", async (ttt) => {
       const target = deepFreeze([{}, "string"]);
-      const { proxy, copies, listeners, commit, revoke } = newProxy(target);
+      const { proxy, copies, listeners, commit } = newProxy(target);
       ttt.notEqual(proxy, target, "can create proxy");
       ttt.deepEqual(proxy, target, "has the same content");
       ttt.deepEqual(proxy[0], {}, "can access object item");
@@ -427,14 +427,7 @@ test("createProxy", async (t) => {
       ttt.deepEqual(arrayProxy, ["subArray"], "can mutate array item");
 
       proxy[3].clear();
-      ttt.deepEqual(new Map(mapProxy), new Map(), "can mutate map item");
-
-      revoke();
-      const revokedError = /Cannot perform 'get' on a proxy that has been revoked/;
-      ttt.throws(() => proxy.length, revokedError, "proxy can not be used after revoked");
-      ttt.throws(() => mapProxy.length, revokedError, "map proxy can not be used after parent is revoked");
-      ttt.throws(() => arrayProxy.length, revokedError, "array proxy can not be used after parent is revoked");
-      ttt.throws(() => objectProxy.length, revokedError, "object proxy can not be used after parent is revoked");
+      ttt.deepEqual(new Map(mapProxy.entries()), new Map(), "can mutate map item");
     });
 
     tt.test("mutate value returned from Array.map()", async (ttt) => {
@@ -446,8 +439,8 @@ test("createProxy", async (t) => {
 
       values[0].set("k", "v");
       ttt.deepEqual(toNative(proxy[0]), new Map([["k", "v"]]), "change reflects in proxy");
-      ttt.deepEqual(listeners.length, 2, "registers a commit listener for each proxy");
-      ttt.deepEqual(toNative(copies), [[new Map([["k", "v"]]), 10]], "make a copy when mutate an map value");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listener when mutate a map value");
+      ttt.deepEqual(toNative(copies), [[new Map([["k", "v"]]), 10]], "make a copy when mutate a map value");
       ttt.equal(Object.isFrozen(copies[0]), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(copies[0][0]), false, "map copy is not frozen at first");
 
@@ -492,8 +485,7 @@ test("createProxy", async (t) => {
       const { map } = nestedObj;
 
       nestedObj.map = new Map(Object.entries({ foo: "bar" }));
-
-      ttt.equal(map.get("foo"), "bar", "prop proxy reflects latest value");
+      ttt.equal(map.has("foo"), false, "prop proxy ref points to original prop");
 
       const nestedArr = proxy.get("array")[2];
       nestedArr.splice(1, 1, "Feb", "Mar");
@@ -518,12 +510,6 @@ test("createProxy", async (t) => {
       const arrProxy = proxy.get("array");
       arrProxy[1].map.delete("foo");
       ttt.equal(map.has("foo"), false, "has return false after key is deleted");
-
-      arrProxy[1].map = {};
-      ttt.throws(() => map.size, /Cannot perform 'get' on a proxy that has been revoked/);
-
-      proxy.delete("array");
-      ttt.throws(() => arrProxy[0], /Cannot perform 'get' on a proxy that has been revoked/);
     });
 
     tt.test("mutate value returned from Map.forEach()", async (ttt) => {
@@ -549,7 +535,7 @@ test("createProxy", async (t) => {
 
       forEachActual[0][1].k = "new";
       ttt.deepEqual(proxy.get("object"), { k: "new" }, "change reflects in proxy");
-      ttt.deepEqual(listeners.length, 2, "registers a commit listener for each proxy");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listener when mutate an object value");
       ttt.deepEqual(toNative(copies), [new Map([["object", { k: "new" }], ["string", "string"]])], "make a copy when mutate an object value");
       ttt.equal(Object.isFrozen(copies[0]), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(copies[0].get("object")), false, "object copy is not frozen at first");
@@ -571,7 +557,7 @@ test("createProxy", async (t) => {
 
       entries[0][1].push("new");
       ttt.deepEqual(proxy.get("array"), ["new"], "change reflects in proxy");
-      ttt.deepEqual(listeners.length, 2, "registers a commit listener for each proxy");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listener when mutate an array value");
       ttt.deepEqual(toNative(copies), [new Map([["array", ["new"]], [10, 10]])], "make a copy when mutate an array value");
       ttt.equal(Object.isFrozen(copies[0]), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(copies[0].get("array")), false, "array copy is not frozen at first");
@@ -593,7 +579,7 @@ test("createProxy", async (t) => {
 
       values[0].set("k", "v");
       ttt.deepEqual(toNative(proxy.get("map")), new Map([["k", "v"]]), "change reflects in proxy");
-      ttt.deepEqual(listeners.length, 2, "registers a commit listener for each proxy");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listener when mutate an map value");
       ttt.deepEqual(toNative(copies), [new Map([["map", new Map([["k", "v"]])], [10, 10]])], "make a copy when mutate an map value");
       ttt.equal(Object.isFrozen(copies[0]), false, "copy is not frozen at first");
       ttt.equal(Object.isFrozen(copies[0].get("map")), false, "map copy is not frozen at first");
@@ -689,6 +675,9 @@ test("createProxy", async (t) => {
       const frozenSet = [...proxy.values()][proxy.size - 1];
       ttt.deepEqual(toNative(frozenSet), new Set(Set.prototype.values.call(set)), "a frozen version is added");
 
+      proxy.add(null);
+      ttt.equal(proxy.has(null), true, "can add null as value");
+
       ttt.deepEqual(toNative(target), new Set(), "target is left untouched");
     });
 
@@ -769,7 +758,7 @@ test("createProxy", async (t) => {
 
       values[0].now = 1;
       ttt.deepEqual(toNative(copies), [new Set([{ now: 1 }, [now]])], "makes a copy when mutate value");
-      ttt.deepEqual(listeners.length, 2, "registers a commit listner for both set and value");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listner when mutate value");
       ttt.deepEqual(toNative(proxy), toNative(copies[0]), "proxy reflects latest copy");
     });
 
@@ -783,7 +772,7 @@ test("createProxy", async (t) => {
 
       keys[0].keys().next().value[0] = 1;
       ttt.deepEqual(toNative(copies), [new Set([new Set([[1]])])], "makes a copy when mutate value");
-      ttt.deepEqual(listeners.length, 3, "registers a commit listner for both set and value");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listner when mutate value");
       ttt.deepEqual(toNative(proxy), toNative(copies[0]), "proxy reflects latest copy");
     });
 
@@ -798,7 +787,7 @@ test("createProxy", async (t) => {
 
       values[0][0].set("now", 1);
       ttt.deepEqual(toNative(copies), [new Set([new Map([["now", 1]])])], "makes a copy when mutate value");
-      ttt.deepEqual(listeners.length, 2, "registers a commit listner for both set and value");
+      ttt.deepEqual(listeners.length, 1, "registers a commit listner when mutate value");
       ttt.deepEqual(toNative(proxy), toNative(copies[0]), "proxy reflects latest copy");
     });
   });
@@ -841,5 +830,72 @@ test("createProxy", async (t) => {
     tt.equal(Object.isFrozen(copies[0]), true, "copy is frozen after commit");
     tt.equal(copies[0].getTime(), expectedDate.getTime(), "can still get from frozen date");
     tt.throws(() => copies[0].setDate(1), /Can not mutate frozen Date/, "can not set frozen date");
+  });
+
+  t.test("attach/detach to/from Object", async (tt) => {
+    const now = Date.now() + 1000;
+    const target = deepFreeze({ set: new Set([now]) });
+    const { proxy, copies, commit } = newProxy(target);
+
+    let setProxy = proxy.set;
+
+    proxy.set = setProxy;
+    tt.deepEqual(copies, [], "ignores when trying to set proxy to same prop");
+
+    proxy.set2 = setProxy;
+    tt.deepEqual(toNative(copies), [{ set: new Set([now]), set2: new Set([now]) }], "can set proxy as value of a new prop");
+    tt.notEqual(proxy.set2, proxy.set, "new prop and old prop have different proxies");
+    tt.equal(proxy.set2, setProxy, "old proxy ref is same as new prop");
+
+    setProxy.add(0);
+    tt.deepEqual(toNative(proxy.set), new Set([now]), "changes made using proxy ref does not affect old prop");
+    tt.deepEqual(toNative(proxy.set2), new Set([now, 0]), "changes made using proxy ref reflects in new prop");
+
+    setProxy = proxy.set;
+    proxy.obj = { nested: { arr: [proxy.set] } };
+    const expectedCopies = [
+      {
+        set: new Set([now]),
+        set2: new Set([now, 0]),
+        obj: { nested: { arr: [new Set([now])] } }
+      }
+    ];
+    tt.equal(proxy.obj.nested.arr[0], setProxy, "proxy ref to nested prop points to newly adopted prop");
+    tt.deepEqual(toNative(copies), expectedCopies, "can set proxy as value of a nested prop");
+
+    commit();
+    tt.equal(Object.isFrozen(copies[0].obj.nested.arr), true);
+  });
+
+  t.test("attach/detach to/from Set", async (tt) => {
+    const now = Date.now() + 1000;
+    const target = deepFreeze(new Set([{ arr: [now] }]));
+    const { proxy, copies } = newProxy(target);
+
+    const objProxy = proxy.values().next().value;
+    proxy.add(objProxy);
+    tt.deepEqual(copies, [], "ignores when trying to add proxy back");
+
+    const arrProxy = objProxy.arr;
+    proxy.add(arrProxy);
+    tt.deepEqual(toNative(copies), [new Set([{ arr: [now] }, [now]])], "can add proxy as new value");
+
+    arrProxy[0] = 0;
+    const proxies = [...proxy.values()];
+    tt.deepEqual(proxies[0].arr, [now], "changes made using proxy ref does not affect old value");
+    tt.deepEqual(proxies[1], [0], "changes made using proxy ref reflects in new value");
+    let expectedCopies = [
+      new Set([{ arr: [now] }, [now]]),
+      new Set([{ arr: [now] }, [0]])
+    ];
+    tt.deepEqual(toNative(copies), expectedCopies, "changes are refected in copies");
+
+    proxy.add({ nested: { arr: arrProxy } });
+    expectedCopies = [
+      new Set([{ arr: [now] }, [now]]),
+      new Set([{ arr: [now] }, [0]]),
+      new Set([{ arr: [now] }, [0], { nested: { arr: [0] } }])
+    ];
+    tt.deepEqual(toNative(copies), expectedCopies, "can add proxy as value of a nested prop");
   });
 });

@@ -31,19 +31,7 @@ export function getTypeOf(value) {
   if (value instanceof Set) {
     return "set";
   }
-  return typeof (value);
-}
-
-export function needsProxy(value) {
-  switch (getTypeOf(value)) {
-    case "object":
-    case "array":
-    case "date":
-    case "map":
-    case "set":
-      return true;
-  }
-  return false;
+  return typeof(value);
 }
 
 export function shallowCopy(value, copyItem = identity) {
@@ -78,24 +66,24 @@ export function shallowCopy(value, copyItem = identity) {
   return obj;
 }
 
-export function shallowFreeze(value) {
-  return freeze(value);
-}
-
-export function deepFreeze(value) {
+export function deepFreeze(value, shallow) {
   let frozen = value;
   // only freeze if necessary
   if (!Object.isFrozen(frozen)) {
     switch (getTypeOf(frozen)) {
       case "object":
-        Reflect.ownKeys(frozen).forEach(key => {
-          frozen[key] = deepFreeze(frozen[key]);
-        });
+        if (!shallow) {
+          Reflect.ownKeys(frozen).forEach(key => {
+            frozen[key] = deepFreeze(frozen[key]);
+          });
+        }
         freeze(frozen);
         break;
       case "array":
-        for (let i = 0; i < frozen.length; i++) {
-          frozen[i] = deepFreeze(frozen[i]);
+        if (!shallow) {
+          for (let i = 0; i < frozen.length; i++) {
+            frozen[i] = deepFreeze(frozen[i]);
+          }
         }
         freeze(frozen);
         break;
@@ -104,7 +92,7 @@ export function deepFreeze(value) {
         break;
       case "map":
       case "set":
-        frozen = freezeCollection(frozen);
+        frozen = freezeCollection(frozen, shallow);
         break;
       default:
     }
@@ -112,29 +100,31 @@ export function deepFreeze(value) {
   return frozen;
 }
 
-function freezeCollection(collection) {
+function freezeCollection(collection, shallow) {
   let frozen = collection;
-  // since we can't update Set value like Map
-  // need to keep a copy of all frozen values
-  // so if any frozen value is different to original
-  // we can make copy the final frozen collection
-  const isSet = frozen instanceof Set;
-  const setCopy = isSet && new Set();
-  let hasDiff = false;
-  frozen.forEach((value, key, coll) => {
-    const newVal = deepFreeze(value);
-    if (isSet) {
-      setCopy.add(newVal);
-    }
-    if (newVal !== value) {
-      hasDiff = true;
-      if (!isSet) {
-        coll.set(key, newVal);
+  if (!shallow) {
+    // since we can't update Set value like Map
+    // need to keep a copy of all frozen values
+    // so if any frozen value is different to original
+    // we can make copy the final frozen collection
+    const isSet = frozen instanceof Set;
+    const setCopy = isSet && new Set();
+    let hasDiff = false;
+    frozen.forEach((value, key, coll) => {
+      const newVal = deepFreeze(value);
+      if (isSet) {
+        setCopy.add(newVal);
       }
+      if (newVal !== value) {
+        hasDiff = true;
+        if (!isSet) {
+          coll.set(key, newVal);
+        }
+      }
+    });
+    if (isSet && hasDiff) {
+      frozen = setCopy;
     }
-  });
-  if (isSet && hasDiff) {
-    frozen = setCopy;
   }
   // freeze collection
   return freeze(toFreezable(frozen));

@@ -1,69 +1,69 @@
-import { deepFreeze, getTypeOf, needsProxy, noop, shallowCopy, shallowFreeze } from "./utils.js";
+import { deepFreeze, getTypeOf, noop, shallowCopy } from "./utils.js";
+
+const proxySymbol = Symbol("proxy");
+
+const setGet = (_, key) => key;
+const setAdd = (target, _, value) => target.add(value);
+const mapGet = (target, key) => target.get(key);
+const mapHas = (target, key) => target.has(key);
+const mapDelete = (target, key) => target.delete(key);
+const mapSet = (target, key, value) => target.set(key, value);
 
 /**
  * Create a new proxy which traps all interactions with the target.
  * When proxy is mutated, it doesn't mutate target but creates a copy instead.
- *
- * @param {Function} getLatest get the lastest value of the proxy target
- * @param {Function} onCopied callback that should be called when target is copied
- *                            for example, set or delete a property
- *                            should pass the new value as the only argument
- * @param {Function} whenCommitted callback for registering commit listeners
- *                                 called right after state changes are committed
- *                                 listeners will be deleted after called to prevent memory leak
- *                                 should register again as required
- * @returns a copy on write proxy
  */
-export function createProxy(value, onCopied, whenCommitted, refresh) {
-  if (!needsProxy(value)) {
-    return { proxy: value, revoke: noop, setTarget: noop };
+export function createProxy(initTarget, initParent) {
+  const [handler, Surrogate, getProp, setProp, hasProp, deleteProp] = {
+    "object": [objectHandler, Object, Reflect.get, Reflect.set, Reflect.has, Reflect.deleteProperty],
+    "array":  [objectHandler, Array,  Reflect.get, Reflect.set, Reflect.has, Reflect.deleteProperty],
+    "map":    [mapHandler,    Map,    mapGet,      mapSet,      mapHas,      mapDelete],
+    "set":    [setHandler,    Set,    setGet,      undefined,   mapHas,      mapDelete],
+    "date":   [dateHandler,   Date],
+  }[getTypeOf(initTarget)] || "";
+
+  if (!handler) {
+    return { proxy: initTarget };
   }
 
-  let target = value;
   let mutated = false;
+  let target = initTarget;
+  let parent = initParent;
   const proxyChildren = new Map();
 
-  const isMap = target instanceof Map;
-  const isSet = target instanceof Set;
-  const isDate = target instanceof Date;
-  const isArray = Array.isArray(target);
-
-  const { proxy, revoke } = Proxy.revocable(
-    isDate ? new Date() : isMap ? new Map() : isSet ? new Set() : isArray ? [] : {},
-    isDate ? dateHandler() : isMap ? mapHandler() : isSet ? setHandler() : objectHandler(),
-  );
-  return {
-    proxy,
-    // revoke self and all proxy children
-    revoke() {
-      proxyChildren.forEach(child => child.revoke());
-      proxyChildren.clear();
-      target = undefined;
-      revoke();
+  const self = {
+    proxy: new Proxy(new Surrogate(), handler()),
+    setParent(p) {
+      if (p !== parent) {
+        // detach from existing parent first
+        parent?.detach();
+        // attch to new parent
+        if (parent = p) {
+          parent.onCopied(target);
+        }
+      }
     },
-    // used by parent to pass in latest target
-    // called when prop is set to a different value, e.g.
-    // - parent[target] = newValue
-    // - parentMap.set(target, newValue)
+    getTarget: () => target,
+    // used by parent to pass in latest target on refresh request
     setTarget(t) {
       if (t !== target) {
-        // go through each child proxy, if their value has changed
-        // then revoke child proxies if any of the follow is true
-        //  - type of their target has changed
-        //  - their target doesn't exist anymore
-        // otherwise update child target
+        // go through each child proxy, if
+        // - their value has changed
+        // - removed from set
+        // detach child proxy
         proxyChildren.forEach((child, key) => {
-          if (isSet) {
-            // delete if key doesn't exist in the new set
-            t.has(key) || deleteChildProxy(key, child);
+          if (!hasProp(t, key)) {
+            deleteChildProxy(key, child);
           } else {
-            const newValue = isMap ? t.get(key) : t[key];
-            const oldValue = isMap ? target.get(key) : target[key];
-            if(newValue !== oldValue) {
-              if (getTypeOf(newValue) === getTypeOf(oldValue)) {
-                child.setTarget(newValue);
-              } else {
+            const newValue = getProp(t, key);
+            const oldValue = getProp(target, key);
+            if (newValue !== oldValue) {
+              if (getTypeOf(newValue) !== getTypeOf(oldValue)) {
+                // detach existing proxy if type has changed
                 deleteChildProxy(key, child);
+              } else {
+                // propagate changes to child
+                child.setTarget(newValue);
               }
             }
           }
@@ -71,19 +71,16 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
         // update target
         target = t;
       }
+    },
+    // called by parent after changes are committed
+    commit() {
+      proxyChildren.forEach(child => child.commit());
+      commit();
     }
   };
+  return self;
 
   // internal implementation
-
-  // request to refresh to make sure target is up to date
-  // this should be a noop in most of the time;
-  // required in async action as the latest state may have
-  // been mutated by other actions
-  function refreshTarget() {
-    !mutated && refresh();
-    return target;
-  }
 
   function dateHandler() {
     const dateMethods = {};
@@ -97,7 +94,7 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
     });
     // do not override special ones
     dateMethods.constructor = Date.prototype.constructor;
-    return { get: (_, prop) => dateMethods[prop] };
+    return { get: proxyAwareGetTrap((prop) => dateMethods[prop]) };
   }
 
   function mapHandler() {
@@ -109,20 +106,8 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
         setChild(key, value);
         return this; // return map proxy
       },
-      delete(key) {
-        return refreshTarget().has(key) && mutate(() => {
-          const r = target.delete(key);
-          deleteChildProxy(key);
-          return r;
-        });
-      },
-      clear() {
-        refreshTarget().size > 0 && mutate(() => {
-          proxyChildren.forEach(child => child.revoke());
-          proxyChildren.clear();
-          target.clear();
-        });
-      },
+      delete: (key) => deleteChild(key),
+      clear() { clearChildren(); },
       // no need to proxy map keys
       keys: () => refreshTarget().keys(),
       values() {
@@ -152,31 +137,21 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
         refreshTarget().forEach((_, key) => cb.call(cbThis, getChild(key), key, this));
       }
     };
-    return { get: (_, prop) => mapMethods[prop] };
+    return { get: proxyAwareGetTrap((prop) => mapMethods[prop]) };
   }
 
   function setHandler() {
     const setMethods = {
-      get size() { return refreshTarget().size },
+      get size() {
+        return refreshTarget().size
+      },
       has: (value) => refreshTarget().has(value),
       add(value) {
-        refreshTarget().has(value) || mutate(() => target.add(deepFreeze(value)));
+        addChild(value);
         return this; // return set proxy
       },
-      delete(value) {
-        return refreshTarget().has(value) && mutate(() => {
-          const r = target.delete(value);
-          deleteChildProxy(value);
-          return r;
-        });
-      },
-      clear() {
-        refreshTarget().size > 0 && mutate(() => {
-          proxyChildren.forEach(child => child.revoke());
-          proxyChildren.clear();
-          target.clear();
-        });
-      },
+      delete: (value) => deleteChild(value),
+      clear() { clearChildren(); },
       keys() {
         return this.values()
       },
@@ -184,20 +159,7 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
         function next() {
           const r = Object.getPrototypeOf(this).next.call(this);
           const { done, value } = r;
-          return done ? r : {
-            done,
-            value: getChild(value, (newVal) => mutate(noop, (v) => {
-              // update child proxy mapping
-              if (v === value) {
-                const child = proxyChildren.get(v);
-                proxyChildren.delete(v);
-                // newVal is freezable so new reference won't be
-                // created when it is frozen later when committed
-                proxyChildren.set(newVal, child);
-              }
-              return v === value ? newVal : v;
-            }))
-          };
+          return done ? r : { done, value: getChild(value) };
         }
         return Object.freeze(
           Object.defineProperty(refreshTarget().values(), "next", { value: next })
@@ -224,17 +186,15 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
         }
       }
     };
-    return { get: (_, prop) => setMethods[prop] };
+    return { get: proxyAwareGetTrap((prop) => setMethods[prop]) };
   }
 
   function objectHandler() {
     return {
-      get(_, prop) {
-        return getChild(prop);
-      },
+      get: proxyAwareGetTrap(prop => getChild(prop)),
 
       set(_, prop, value, receiver) {
-        if (receiver !== proxy) {
+        if (receiver !== self.proxy) {
           // value is set onto a different target
           // do not intercept and just pass through
           return Reflect.set(_, prop, value, receiver);
@@ -242,50 +202,31 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
         return setChild(prop, value);
       },
 
-      deleteProperty(_, prop) {
-        return !Reflect.has(refreshTarget(), prop) || mutate(() => {
-          const r = Reflect.deleteProperty(target, prop);
-          r && deleteChildProxy(prop);
-          return r;
-        });
-      },
+      deleteProperty: (_, prop) => deleteChild(prop),
 
       defineProperty(_, prop, descriptor) {
         refreshTarget();
         return mutate(() => Reflect.defineProperty(target, prop, descriptor));
       },
 
-      has(_, prop) {
-        return Reflect.has(refreshTarget(), prop);
-      },
+      has: (_, prop) => Reflect.has(refreshTarget(), prop),
 
-      ownKeys() {
-        return Reflect.ownKeys(refreshTarget());
-      },
+      ownKeys: () => Reflect.ownKeys(refreshTarget()),
 
-      getOwnPropertyDescriptor(t, prop) {
-        const ret = {
-          ...Reflect.getOwnPropertyDescriptor(refreshTarget(), prop),
-          // eveything on proxy is mutable
-          configurable: true,
-          writable: true,
-          // unless this is a special prop
-          ...Reflect.getOwnPropertyDescriptor(t, prop)
-        };
-        return ret;
-      },
+      getOwnPropertyDescriptor: (t, prop) => ({
+        ...Reflect.getOwnPropertyDescriptor(refreshTarget(), prop),
+        // eveything on proxy is mutable
+        configurable: true,
+        writable: true,
+        // unless this is a special prop
+        ...Reflect.getOwnPropertyDescriptor(t, prop)
+      }),
 
-      isExtensible() {
-        return Reflect.isExtensible(refreshTarget());
-      },
+      isExtensible: () => Reflect.isExtensible(refreshTarget()),
 
-      preventExtensions() {
-        return Reflect.preventExtensions(refreshTarget());
-      },
+      preventExtensions: () => Reflect.preventExtensions(refreshTarget()),
 
-      getPrototypeOf(_) {
-        return Reflect.getPrototypeOf(refreshTarget());
-      },
+      getPrototypeOf: (_) => Reflect.getPrototypeOf(refreshTarget()),
 
       setPrototypeOf(_, proto) {
         const same = proto === Reflect.getPrototypeOf(refreshTarget());
@@ -294,59 +235,140 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
     };
   }
 
-  function getChild(key, onChildCopied = (v) => setChild(key, v, true)) {
+  // common helpers
+
+  function proxyAwareGetTrap(get) {
+    return (_, prop) => prop === proxySymbol ? self : get(prop);
+  }
+
+  // request to refresh to make sure target is up to date
+  // this should be a noop in most of the time;
+  // required in async action as the latest state may have
+  // been mutated by other actions
+  function refreshTarget() {
+    !mutated && parent?.refresh();
+    return target;
+  }
+
+  function getChild(key) {
     // create proxy if hasn't already
     let child = proxyChildren.get(key);
     if (!child) {
       refreshTarget();
-      const value = isSet ? key : (isMap ? target.get(key) : target[key]);
-      child = createProxy(value, onChildCopied, whenCommitted, refresh);
-      if (child.revoke && child.revoke !== noop) {
-        proxyChildren.set(key, child);
-      }
+      child = adoptOrCreateChild(key);
     }
     return child.proxy;
   }
 
-  function setChild(key, value, isBubbledUp) {
-    refreshTarget();
-    const oldValue = isMap ? target.get(key) : target[key];
-    return oldValue === value || mutate(() => {
-      // need to delete and revoke old proxy if type has changed
-      // for example, if prop changed from Array to Object
-      // Array.isArray() will still return true for old proxy
-      if (getTypeOf(oldValue) !== getTypeOf(value)) {
+  function setChild(key, value) {
+    const newValue = proxify(value);
+    // newValue may not be a proxy if value
+    // - is simple value like string or
+    // - does not contain proxy
+    if (isProxy(newValue)) {
+      const child = newValue[proxySymbol];
+      // ignore if same proxy is set back
+      if (proxyChildren.get(key) !== child) {
+        adoptOrCreateChild(key, child);
+      }
+    } else {
+      const oldValue = getProp(refreshTarget(), key);
+      oldValue !== value && mutate(() => {
+        // detach old proxy
         deleteChildProxy(key);
-      }
+        return setProp(target, key, newValue);
+      });
+    }
+    return true;
+  }
 
-      // freeze if value is not coming from child
-      // as there might be further mutations
-      const newValue = isBubbledUp ? value : deepFreeze(value);
-
-      // update prop value
-      if (isMap) {
-        target.set(key, newValue);
+  function addChild(value) {
+    if (!refreshTarget().has(value)) {
+      const newValue = proxify(value);
+      // newValue may not be a proxy if value
+      // - is simple value like string or
+      // - does not contain proxy
+      if (isProxy(newValue)) {
+        const child = newValue[proxySymbol];
+        const key = child.getTarget();
+        // ignore if same proxy is added back
+        if (proxyChildren.get(key) !== child) {
+          adoptOrCreateChild(key, child);
+          target.add(key);
+        }
       } else {
-        target[key] = newValue;
+        mutate(() => target.add(newValue));
       }
-      // update target of child proxy if set is not from child
-      if (!isBubbledUp) {
-        proxyChildren.get(key)?.setTarget(newValue);
-      }
-      return true;
+    }
+  }
+
+  function adoptOrCreateChild(key, child) {
+    const childParent = {
+      detach: () => proxyChildren.delete(key),
+      refresh: () => parent?.refresh(),
+      onCopied: !(target instanceof Set)
+        ? (newVal) => mutate(() => setProp(target, key, newVal))
+        : (newVal) => {
+          // Set doesn't support updating an item in place unfortunately
+          // need to make a copy when item turns into mutated state
+          mutated = false;
+          mutate(noop, (v) => {
+            // update child proxy mapping
+            if (v === key) {
+              const childProxy = proxyChildren.get(v);
+              if (childProxy) {
+                proxyChildren.delete(v);
+                // newVal is freezable so new reference won't be
+                // created when it is frozen later when committed
+                proxyChildren.set(newVal, childProxy);
+              }
+            }
+            return v === key ? newVal : v;
+          })
+        }
+    };
+
+    let childToAdopt = child;
+    // create a new child if required
+    if (!child) {
+      const childValue = getProp(target, key);
+      childToAdopt = createProxy(childValue, childParent);
+    }
+
+    if (isProxy(childToAdopt.proxy)) {
+      // set parent if child is not new
+      child && childToAdopt.setParent(childParent);
+      proxyChildren.set(key, childToAdopt);
+    }
+    return childToAdopt;
+  }
+
+  function deleteChild(key, child) {
+    return hasProp(refreshTarget(), key) && mutate(() => {
+      const r = deleteProp(target, key);
+      deleteChildProxy(key, child);
+      return r;
     });
   }
 
   function deleteChildProxy(key, child) {
     const kid = child || proxyChildren.get(key);
-    if (kid) {
-      kid.revoke();
-      proxyChildren.delete(key);
-    }
+    proxyChildren.delete(key);
+    kid?.setParent(null);
+  }
+
+  function clearChildren() {
+    refreshTarget().size > 0 && mutate(() => {
+      proxyChildren.forEach(child => child.setParent(null));
+      proxyChildren.clear();
+      target.clear();
+    });
   }
 
   function mutate(doMutate, copyItem) {
-    if (!mutated) {
+    const shouldCopy = !mutated;
+    if (shouldCopy) {
+      mutated = true;
       // make a copy if hasn't mutated
       // do not mutate committed target
       target = shallowCopy(target, copyItem);
@@ -354,13 +376,9 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
 
     const result = doMutate();
 
-    if (!mutated) {
-      onCopied(target);
-      // request to be notified on first mutation
-      whenCommitted(commit);
+    if (shouldCopy) {
+      parent?.onCopied(target);
     }
-
-    mutated = true;
     return result;
   }
 
@@ -370,9 +388,47 @@ export function createProxy(value, onCopied, whenCommitted, refresh) {
   function commit() {
     if (mutated) {
       mutated = false
-      // freeze target if not revoked
-      target && shallowFreeze(target);
+      deepFreeze(target, true);
     }
   }
 }
 
+function isProxy(value) {
+  return value?.[proxySymbol];
+}
+
+function proxify(value) {
+  if (isProxy(value)) {
+    return value;
+  }
+
+  let proxy;
+  // only need to shallow freeze value here
+  // content will be frozen as they are visited
+  const frozen = deepFreeze(value, true);
+  // lazy creating proxy only if needed
+  const getProxy = () => proxy || (proxy = createProxy(frozen).proxy);
+  // adopt child proxy deteced
+  const handle = (k, v, addOrSet) => {
+    const child = proxify(v);
+    //
+    (isProxy(child) || child !== v) && addOrSet(getProxy(), k, child);
+  }
+  // deep detect proxy child and freeze along the way
+  switch(getTypeOf(frozen)) {
+    case "object":
+      Reflect.ownKeys(frozen).forEach(k => handle(k, frozen[k], Reflect.set));
+      break;
+    case "array":
+      frozen.forEach((v, k) => handle(k, v, Reflect.set));
+      break;
+    case "map":
+      frozen.forEach((v, k) => handle(k, v, mapSet));
+      break;
+    case "set":
+      frozen.forEach((v, k) => handle(k, v, setAdd));
+      break;
+    default:
+  }
+  return proxy || frozen;
+}

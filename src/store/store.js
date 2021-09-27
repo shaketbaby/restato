@@ -79,9 +79,7 @@ export function createStore(initState = {}) {
 
       const batch = pendingActions;
       pendingActions = [];
-      batch.forEach(([action, args]) => {
-        applyMiddleware(callAction, action, args);
-      });
+      batch.forEach(([action, args]) => applyMiddleware(callAction, action, args));
     }
   }
 
@@ -91,6 +89,8 @@ export function createStore(initState = {}) {
 
     const onCopied = (copy) => {
       latest = copy;
+      // commit changes across the proxy tree
+      onCommitted(proxy.commit);
       // schedule to commit later, this is desirable because
       // multiple mutations can be made in one operation; by
       // scheduling we avoid creating unnecessary copies
@@ -113,7 +113,7 @@ export function createStore(initState = {}) {
     const refresh = () => {
       if (selectors === null) {
         // this means store has been destroyed
-        proxy.revoke();
+        proxy.setParent(null);
         assertNotDestroyed();
       } else {
         // commit pending changes for async refresh request
@@ -124,7 +124,7 @@ export function createStore(initState = {}) {
     };
 
     try {
-      proxy = createProxy(latest, onCopied, whenCommitted, refresh);
+      proxy = createProxy(latest, { refresh, onCopied, detach: noop });
       action(proxy.proxy, ...args);
     } finally {
       // apply mutations immediately
@@ -203,7 +203,7 @@ export function createStore(initState = {}) {
     }
   }
 
-  function whenCommitted(listener) {
+  function onCommitted(listener) {
     commitListeners.push(listener);
   }
 
