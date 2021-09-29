@@ -264,18 +264,16 @@ export function createProxy(initTarget, initParent) {
   }
 
   function setChild(key, value) {
+    refreshTarget();
+
     const newValue = proxify(value);
     // newValue may not be a proxy if value
     // - is simple value like string or
     // - does not contain proxy
     if (isProxy(newValue)) {
-      const child = newValue[proxySymbol];
-      // ignore if same proxy is set back
-      if (proxyChildren.get(key) !== child) {
-        adoptChild(key, child);
-      }
+      adoptProxy(newValue, key);
     } else {
-      const oldValue = getProp(refreshTarget(), key);
+      const oldValue = getProp(target, key);
       oldValue !== value && mutate(() => {
         // detach old proxy
         deleteChildProxy(key);
@@ -286,26 +284,26 @@ export function createProxy(initTarget, initParent) {
   }
 
   function addChild(value) {
+    refreshTarget();
+
     const newValue = proxify(value);
     // newValue may not be a proxy if value
     // - is simple value like string or
     // - does not contain proxy
     if (isProxy(newValue)) {
-      const child = newValue[proxySymbol];
-      const key = child.getTarget();
-      // ignore if same proxy is added back
-      if (proxyChildren.get(key) !== child) {
-        adoptChild(key, child);
-      }
+      adoptProxy(newValue, newValue[proxySymbol].getTarget());
     } else {
-      !refreshTarget().has(value) && mutate(() => target.add(newValue));
+      !target.has(value) && mutate(() => target.add(newValue));
     }
   }
 
-  function adoptChild(key, child) {
-    refreshTarget();
-    child.setParent(createParent(key));
-    proxyChildren.set(key, child);
+  function adoptProxy(proxy, key) {
+    const child = proxy[proxySymbol];
+    // ignore if same proxy is added back
+    if (proxyChildren.get(key) !== child) {
+      child.setParent(createParent(key));
+      proxyChildren.set(key, child);
+    }
   }
 
   function createParent(key) {
@@ -395,6 +393,10 @@ function isProxy(value) {
   return value?.[proxySymbol];
 }
 
+// detect proxies deeply and adopt if any and free other values
+// will create a proxy for all parents up to the root if
+// - value is a proxy or
+// - value is a Set
 function proxify(value) {
   if (isProxy(value)) {
     return value;
@@ -424,6 +426,8 @@ function proxify(value) {
       frozen.forEach((v, k) => handle(k, v, mapSet));
       break;
     case "set":
+      // can't update individule set item unfortunately
+      // have to clear and add each item back to maintain original order
       getProxy().clear();
       value.forEach((v, k) => handle(k, v, setAdd, true));
       break;
