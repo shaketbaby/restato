@@ -6,8 +6,10 @@ import { render, fireEvent } from '@testing-library/react';
 import { dispatch, useSelector, store } from "./react.js";
 
 test("ReactStore", async (t) => {
+  const selector = (state) => state.count;
+
   function Counter() {
-    const count = useSelector((state) => state.count);
+    const count = useSelector(selector);
     const increase = () => dispatch((state) => { state.count++; });
     return React.createElement("button", { onClick: increase }, count);
   }

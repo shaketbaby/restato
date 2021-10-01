@@ -1,21 +1,29 @@
 // Binding for using store with React.js
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createStore } from "../store/index.js";
+import { inherit } from "../store/utils.js";
 
 function createReactStore(initState) {
   const store = createStore(initState);
 
-  const reactStore = {
-    useSelector(selector) {
-      const [value, setValue] = useState(store.select(selector));
+  return inherit(store, {
+    useSelector(selector, isSame = Object.is) {
+      const valueRef = useRef(store.select(selector));
+      const [value, setValue] = useState(valueRef.current);
 
-      useEffect(() => store.subscribe(state => setValue(selector(state))), []);
+      useEffect(
+        () => store.subscribe(state => {
+          const newValue = selector(state);
+          if (!isSame(valueRef.current, newValue)) {
+            setValue(valueRef.current = newValue);
+          }
+        }),
+        [selector, isSame]
+      );
 
       return value;
     },
-  };
-
-  return Object.setPrototypeOf(reactStore, store);
+  });
 }
 
 // default global store
