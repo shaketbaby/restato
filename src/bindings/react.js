@@ -1,5 +1,5 @@
 // Binding for using store with React.js
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { createStore } from "../store/index.js";
 import { inherit } from "../store/utils.js";
 
@@ -8,15 +8,12 @@ function createReactStore(initState) {
 
   return inherit(store, {
     useSelector(selector, isSame = Object.is) {
-      const valueRef = useRef(store.select(selector));
-      const [value, setValue] = useState(valueRef.current);
+      const [value, setValue] = useState(store.select(selector));
 
       useEffect(
         () => store.subscribe(state => {
           const newValue = selector(state);
-          if (!isSame(valueRef.current, newValue)) {
-            setValue(valueRef.current = newValue);
-          }
+          setValue(v => isSame(v, newValue) ? v : newValue);
         }),
         [selector, isSame]
       );
