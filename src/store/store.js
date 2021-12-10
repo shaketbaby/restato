@@ -1,5 +1,7 @@
 import { createProxy } from "./proxy.js";
-import { deepFreeze, inherit, noop } from "./utils.js";
+import { inherit, noop } from "./utils.js";
+
+const internalSymbol = Symbol("internal");
 
 export function createStore(initState = {}) {
   // actions to be triggered
@@ -10,10 +12,10 @@ export function createStore(initState = {}) {
   let commitListeners = []; // internal listeners
   let selectors = []; // external listeners
 
-  // current committed state
-  let state = deepFreeze(initState);
-  // latest state, including pending changes
-  let latest = state;
+  let state = {
+    latest: null, // latest state, including pending changes
+    committed: null, // current committed state
+  }
 
   let middlewares = [];
 
@@ -23,27 +25,30 @@ export function createStore(initState = {}) {
       // enqueue the action to trigger later instead of immediately
       // so that actions dispatched almost at same time are batched
       pendingActions.push([action, args]);
-      schedule(pendingActionsCount, triggerActions);
+      schedule(() => pendingActions.length, triggerActions);
     },
 
     getState() {
       assertNotDestroyed();
-      return state;
+      return state.committed;
     },
 
     setState(newState) {
       assertNotDestroyed();
       discardChanges();
-      state = latest = deepFreeze(newState);
-      schedule(storeInner.getState, notifySelectors);
+      pendingActions = []; // discard pending actions
+      // update state by calling a special action, bypassing middlewares
+      const action = (s, latest) => s.latest = latest;
+      action[internalSymbol] = true;
+      callAction(action, [newState]);
     },
   });
 
   // external store interface
-  return Object.freeze(inherit(storeInner, {
+  const store = Object.freeze(inherit(storeInner, {
     select(selector) {
       assertNotDestroyed();
-      return selector(state);
+      return selector(state.committed);
     },
 
     subscribe(selector) {
@@ -64,12 +69,25 @@ export function createStore(initState = {}) {
     },
 
     destroy() {
-      middlewares?.forEach(mw => mw.destroy && callIgnoreError(mw.destroy));
-      latest = state = selectors = middlewares = pendingActions = commitListeners = null;
+      middlewares?.forEach(mw => {
+        try {
+          mw.destroy?.();
+        } catch (error) {
+          console.error(`Error destroying middleware`, error);
+        }
+      });
+      state = selectors = middlewares = pendingActions = commitListeners = null;
     },
   }));
 
+
+  // initialise state
+  storeInner.setState(initState);
+
+  return store;
+
   // internal implementations
+
   function triggerActions() {
     // run if store is not destroyed
     if (pendingActions) {
@@ -88,9 +106,9 @@ export function createStore(initState = {}) {
     let proxy;
 
     const onCopied = (copy) => {
-      latest = copy;
+      state = copy;
       // commit changes across the proxy tree
-      onCommitted(proxy.commit);
+      commitListeners.push(proxy.commit);
       // schedule to commit later, this is desirable because
       // multiple mutations can be made in one operation; by
       // scheduling we avoid creating unnecessary copies
@@ -119,13 +137,14 @@ export function createStore(initState = {}) {
         // commit pending changes for async refresh request
         // as latest state may have been changed by others
         isAsync && commitAsyncMutation();
-        proxy.setTarget(latest);
+        proxy.setTarget(state);
       }
     };
 
     try {
-      proxy = createProxy(latest, { refresh, onCopied, detach: noop });
-      action(proxy.proxy, ...args);
+      proxy = createProxy(state, { refresh, onCopied, detach: noop });
+      // pass full state proxy if this is an internal action
+      action(action[internalSymbol] ? proxy.proxy : proxy.proxy.latest, ...args);
     } finally {
       // apply mutations immediately
       commitChanges();
@@ -148,16 +167,18 @@ export function createStore(initState = {}) {
   }
 
   function commitChanges() {
-    if (state !== latest) {
-      state = latest;
+    if (state.committed !== state.latest) {
+      state.committed = state.latest;
       notifyCommitListeners();
-      schedule(storeInner.getState, notifySelectors);
+      if (selectors?.length) {
+        schedule(storeInner.getState, notifySelectors);
+      }
     }
   }
 
   function discardChanges() {
-    if (latest !== state) {
-      latest = state;
+    if (state.latest !== state.committed) {
+      state.latest = state.committed;
       notifyCommitListeners();
     }
   }
@@ -175,7 +196,7 @@ export function createStore(initState = {}) {
 
   function notifySelectors() {
     // notify external listeners if full commit
-    selectors?.forEach(selector => callIgnoreError(selector, state));
+    selectors?.forEach(selector => store.select(selector));
   }
 
   function schedule(getGuard, fn) {
@@ -184,30 +205,9 @@ export function createStore(initState = {}) {
     queueMicrotask(() => getGuard() === guard && fn());
   }
 
-  function callIgnoreError(fn, ...args) {
-    try {
-      fn(...args);
-    } catch (error) {
-      // we don't handle error, print a warning to notify app developers
-      console.error(
-        `Error calling function `, error,
-        `\n function: `, fn,
-        `\narguments: `, args
-      );
-    }
-  }
-
   function assertNotDestroyed() {
     if (!selectors) {
       throw new Error("Store has been destroyed!");
     }
-  }
-
-  function onCommitted(listener) {
-    commitListeners.push(listener);
-  }
-
-  function pendingActionsCount() {
-    return pendingActions.length;
   }
 }

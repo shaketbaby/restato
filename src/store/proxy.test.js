@@ -1,6 +1,6 @@
 import test from "tape";
 
-import { deepFreeze, getTypeOf, noop } from "./utils.js";
+import { freeze, getTypeOf, noop } from "./utils.js";
 import { createProxy } from "./proxy.js";
 
 test("createProxy", async (t) => {
@@ -57,7 +57,7 @@ test("createProxy", async (t) => {
 
   t.test("for Object", async (tt) => {
     tt.test("returns a proxy", async (ttt) => {
-      const target = deepFreeze({
+      const target = freeze({
         str: "string",
         array: ["item"],
         object: { prop: "value" },
@@ -84,7 +84,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("update primitive prop", async (ttt) => {
-      const target = deepFreeze({});
+      const target = freeze({});
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       proxy.prop = "value";
@@ -113,7 +113,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("update nested object prop", async (ttt) => {
-      const target = deepFreeze({});
+      const target = freeze({});
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       proxy.object = { prop: "value" };
@@ -159,7 +159,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("update nested array prop", async (ttt) => {
-      const target = deepFreeze({});
+      const target = freeze({});
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       proxy.array = ["item"];
@@ -205,7 +205,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("update nested map prop", async (ttt) => {
-      const target = deepFreeze({});
+      const target = freeze({});
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       proxy.map = new Map(Object.entries({ prop: "value" }));
@@ -252,7 +252,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("delete properties", async (ttt) => {
-      const target = deepFreeze({ num: 1, array: [{ map: new Map() }] });
+      const target = freeze({ num: 1, array: [{ map: new Map() }] });
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       const arrayProxy = proxy.array;
@@ -286,7 +286,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("mutate value returned from Object.values()", async (ttt) => {
-      const target = deepFreeze({ num: 1, object: {} });
+      const target = freeze({ num: 1, object: {} });
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       const values = Object.values(proxy);
@@ -304,7 +304,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("mutate value returned from Object.entries()", async (ttt) => {
-      const target = deepFreeze({ num: 1, object: {} });
+      const target = freeze({ num: 1, object: {} });
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       const values = Object.entries(proxy);
@@ -322,7 +322,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("mutate prototype", async (ttt) => {
-      const target = deepFreeze({});
+      const target = freeze({});
       const { proxy, copies, listeners } = newProxy(target);
 
       let proto = Object.getPrototypeOf(proxy);
@@ -342,7 +342,7 @@ test("createProxy", async (t) => {
 
     tt.test("reassign prop", async (ttt) => {
       const now = Date.now() + 1000;
-      const target = deepFreeze({
+      const target = freeze({
         object: {
           wontExist: { now },
           typeWillChange: { now },
@@ -377,7 +377,7 @@ test("createProxy", async (t) => {
       const now = Date.now();
       const obj = { now };
       const arr = [now];
-      const target = deepFreeze({ set: new Set([obj, arr]) });
+      const target = freeze({ set: new Set([obj, arr]) });
 
       const { proxy } = newProxy(target);
       const [objProxy, arrayProxy] = [...proxy.set.values()];
@@ -390,7 +390,7 @@ test("createProxy", async (t) => {
 
   t.test("for Array", async (tt) => {
     tt.test("basic operations", async (ttt) => {
-      const target = deepFreeze([{}, "string"]);
+      const target = freeze([{}, "string"]);
       const { proxy, copies, listeners, commit } = newProxy(target);
       ttt.notEqual(proxy, target, "can create proxy");
       ttt.deepEqual(proxy, target, "has the same content");
@@ -431,7 +431,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("mutate value returned from Array.map()", async (ttt) => {
-      const target = deepFreeze([new Map(), 10]);
+      const target = freeze([new Map(), 10]);
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       const values = proxy.map(v => v);
@@ -452,7 +452,7 @@ test("createProxy", async (t) => {
 
   t.test("for Map", async (tt) => {
     tt.test("basic operations", async (ttt) => {
-      const target = deepFreeze(new Map([
+      const target = freeze(new Map([
         ["object", {}],
         ["string", "string"],
       ]));
@@ -513,7 +513,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("mutate value returned from Map.forEach()", async (ttt) => {
-      const target = deepFreeze(new Map([
+      const target = freeze(new Map([
         ["object", { k: "v" }],
         ["string", "string"],
       ]));
@@ -546,7 +546,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("mutate value returned from Map.entries()", async (ttt) => {
-      const target = deepFreeze(new Map([
+      const target = freeze(new Map([
         ["array", []],
         [10, 10],
       ]));
@@ -568,7 +568,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("mutate value returned from Map.values()", async (ttt) => {
-      const target = deepFreeze(new Map([
+      const target = freeze(new Map([
         ["map", new Map()],
         [10, 10],
       ]));
@@ -592,7 +592,7 @@ test("createProxy", async (t) => {
 
   t.test("for Set", async (tt) => {
     tt.test("can create proxy", async (ttt) => {
-      const target = deepFreeze(new Set([1, { obj: true }, ["array"],]));
+      const target = freeze(new Set([1, { obj: true }, ["array"],]));
       const { proxy, copies, listeners } = newProxy(target);
       ttt.notEqual(proxy, target, "returns a proxy");
       ttt.equal(proxy instanceof Set, true, "is considered a Set");
@@ -603,7 +603,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("has works", async (ttt) => {
-      const target = deepFreeze(new Set([1, { obj: true }, ["array"], new Map(), new Set(), new Date()]));
+      const target = freeze(new Set([1, { obj: true }, ["array"], new Map(), new Set(), new Date()]));
       const { proxy, copies, listeners } = newProxy(target);
 
       for (const v of target) {
@@ -619,7 +619,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("add works", async (ttt) => {
-      const target = deepFreeze(new Set([]));
+      const target = freeze(new Set([]));
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       ttt.equal(proxy.add(1), proxy, "can add new number and returns proxy");
@@ -685,10 +685,10 @@ test("createProxy", async (t) => {
       const n = Date.now();
       const arr = ["array"];
       const obj = { obj: true };
-      const map = deepFreeze(new Map());
-      const set = deepFreeze(new Set());
-      const date = deepFreeze(new Date());
-      const target = deepFreeze(new Set([n, arr, obj, map, set, date]));
+      const map = freeze(new Map());
+      const set = freeze(new Set());
+      const date = freeze(new Date());
+      const target = freeze(new Set([n, arr, obj, map, set, date]));
       const { proxy, copies, listeners, commit } = newProxy(target);
 
       ttt.equal(proxy.delete("unknown"), false, "returns false when delete unknown value");
@@ -732,7 +732,7 @@ test("createProxy", async (t) => {
     });
 
     tt.test("clear works", async (ttt) => {
-      const target = deepFreeze(new Set([1, "2", {}]));
+      const target = freeze(new Set([1, "2", {}]));
       const { proxy, copies, listeners, commit } = newProxy(target);
       ttt.equal(proxy.clear(), undefined, "can clear Set");
       ttt.equal(proxy.size, 0, "size becomes 0 after clear");
@@ -750,7 +750,7 @@ test("createProxy", async (t) => {
 
     tt.test("mutate value returned from values()", async (ttt) => {
       const now = Date.now();
-      const target = deepFreeze(new Set([{ now }, [now]]));
+      const target = freeze(new Set([{ now }, [now]]));
       const { proxy, copies, listeners } = newProxy(target);
 
       const values = [...proxy.values()];
@@ -764,7 +764,7 @@ test("createProxy", async (t) => {
 
     tt.test("mutate value returned from keys()", async (ttt) => {
       const now = Date.now();
-      const target = deepFreeze(new Set([new Set([[now]])]));
+      const target = freeze(new Set([new Set([[now]])]));
       const { proxy, copies, listeners } = newProxy(target);
 
       const keys = [...proxy.keys()];
@@ -778,7 +778,7 @@ test("createProxy", async (t) => {
 
     tt.test("mutate value returned from entries()", async (ttt) => {
       const now = Date.now();
-      const target = deepFreeze(new Set([new Map([["now", now]])]));
+      const target = freeze(new Set([new Map([["now", now]])]));
       const { proxy, copies, listeners } = newProxy(target);
 
       const values = [...proxy.entries()];
@@ -795,7 +795,7 @@ test("createProxy", async (t) => {
   t.test("for Date", async (tt) => {
     const now = Date.now();
     const expectedDate = new Date(now);
-    const target = deepFreeze(new Date(now));
+    const target = freeze(new Date(now));
     const { proxy, copies, listeners, commit } = newProxy(target);
 
     Reflect.ownKeys(Date.prototype).forEach(key => {
@@ -834,7 +834,7 @@ test("createProxy", async (t) => {
 
   t.test("attach/detach to/from Object", async (tt) => {
     const now = Date.now() + 1000;
-    const target = deepFreeze({ set: new Set([now]) });
+    const target = freeze({ set: new Set([now]) });
     const { proxy, copies, commit } = newProxy(target);
 
     let setProxy = proxy.set;
@@ -881,7 +881,7 @@ test("createProxy", async (t) => {
 
   t.test("attach/detach to/from Set", async (tt) => {
     const now = Date.now() + 1000;
-    const target = deepFreeze(new Set([{ arr: [now] }]));
+    const target = freeze(new Set([{ arr: [now] }]));
     const { proxy, copies } = newProxy(target);
 
     const objProxy = proxy.values().next().value;
@@ -918,7 +918,7 @@ test("createProxy", async (t) => {
   });
 
   t.test("behaviour when adopting a proxy", async (tt) => {
-    const target = deepFreeze({ obj: { count: 0 } });
+    const target = freeze({ obj: { count: 0 } });
     const { proxy, commit } = newProxy(target);
 
     const objProxy = proxy.obj;

@@ -1,4 +1,4 @@
-import { deepFreeze, getTypeOf, noop, shallowCopy } from "./utils.js";
+import { copy, freeze, getTypeOf, noop } from "./utils.js";
 
 const proxySymbol = Symbol("proxy");
 
@@ -367,7 +367,7 @@ export function createProxy(initTarget, initParent) {
       mutated = true;
       // make a copy if hasn't mutated
       // do not mutate committed target
-      target = shallowCopy(target, copyItem);
+      target = copy(target, copyItem);
     }
 
     const result = doMutate();
@@ -384,7 +384,7 @@ export function createProxy(initTarget, initParent) {
   function commit() {
     if (mutated) {
       mutated = false
-      deepFreeze(target, true);
+      freeze(target, true);
     }
   }
 }
@@ -405,7 +405,7 @@ function proxify(value) {
   let proxy;
   // only need to shallow freeze value here
   // content will be frozen as they are visited
-  const frozen = deepFreeze(value, true);
+  const frozen = freeze(value, true);
   // lazy creating proxy only if needed
   const getProxy = () => proxy || (proxy = createProxy(frozen).proxy);
   // adopt child proxy deteced

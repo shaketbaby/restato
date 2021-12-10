@@ -1,4 +1,4 @@
-import { freeze, toFreezable } from "./freezable.js";
+import { shallowFreeze, toFreezable } from "./freezable.js";
 
 export const noop = () => {};
 
@@ -34,7 +34,7 @@ export function getTypeOf(value) {
   return typeof(value);
 }
 
-export function shallowCopy(value, copyItem = identity) {
+export function copy(value, copyItem = identity) {
   if (Array.isArray(value)) {
     const len = value.length;
     const arr = new Array(len);
@@ -66,7 +66,7 @@ export function shallowCopy(value, copyItem = identity) {
   return obj;
 }
 
-export function deepFreeze(value, shallow) {
+export function freeze(value, shallow) {
   let frozen = value;
   // only freeze if necessary
   if (!Object.isFrozen(frozen)) {
@@ -74,21 +74,21 @@ export function deepFreeze(value, shallow) {
       case "object":
         if (!shallow) {
           Reflect.ownKeys(frozen).forEach(key => {
-            frozen[key] = deepFreeze(frozen[key]);
+            frozen[key] = freeze(frozen[key]);
           });
         }
-        freeze(frozen);
+        shallowFreeze(frozen);
         break;
       case "array":
         if (!shallow) {
           for (let i = 0; i < frozen.length; i++) {
-            frozen[i] = deepFreeze(frozen[i]);
+            frozen[i] = freeze(frozen[i]);
           }
         }
-        freeze(frozen);
+        shallowFreeze(frozen);
         break;
       case "date":
-        frozen = freeze(toFreezable(frozen));
+        frozen = shallowFreeze(toFreezable(frozen));
         break;
       case "map":
       case "set":
@@ -111,7 +111,7 @@ function freezeCollection(collection, shallow) {
     const setCopy = isSet && new Set();
     let hasDiff = false;
     frozen.forEach((value, key, coll) => {
-      const newVal = deepFreeze(value);
+      const newVal = freeze(value);
       if (isSet) {
         setCopy.add(newVal);
       }
@@ -127,5 +127,5 @@ function freezeCollection(collection, shallow) {
     }
   }
   // freeze collection
-  return freeze(toFreezable(frozen));
+  return shallowFreeze(toFreezable(frozen));
 }

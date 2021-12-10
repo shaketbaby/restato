@@ -7,7 +7,7 @@ const FreezableTypes = [
   getFreezableType(Set),
 ];
 
-export function freeze(target) {
+export function shallowFreeze(target) {
   return (target[freezeSymbol] || Object.freeze)(target);
 }
 
@@ -61,11 +61,11 @@ function getFreezableType(type) {
       return value;
     })
   );
-  descriptors[freezeSymbol] = { value: getFreeze(type) };
+  descriptors[freezeSymbol] = { value: getFreezeFn(type) };
   return Object.freeze(Object.create(type.prototype, descriptors));
 }
 
-function getFreeze(type) {
+function getFreezeFn(type) {
   const frozenProps = getFrozenDescriptors(type);
   return function freeze(target) {
     const proto = Object.getPrototypeOf(target);
